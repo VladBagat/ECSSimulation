@@ -1,7 +1,9 @@
 mod components;
 
 use bevy::prelude::*;
-use components::{Health, Hunger, Name, Sleep, Thirst};
+use components::{Health, Hunger, Name, Sleep, Thirst, CharacterBundle};
+
+use crate::components::{Movement, Position};
 
 pub struct HelloPlugin;
 
@@ -52,9 +54,16 @@ where
     f(value)
 }
 
-fn add_animal(mut commands: Commands) { 
-    commands.spawn((Name("Vlad".to_string()), Health(100.0), Hunger(100.0), Thirst(100.0), Sleep(100.0)));
-    commands.spawn((Name("Sanya".to_string()), Health(100.0), Hunger(100.0), Thirst(100.0), Sleep(100.0)));
-    commands.spawn((Name("Miha".to_string()), Health(100.0), Hunger(100.0), Thirst(100.0), Sleep(100.0)));
-    commands.spawn((Name("Lexa".to_string()), Health(100.0), Hunger(100.0), Thirst(100.0), Sleep(100.0)));
+fn add_animal(mut commands: Commands) {
+    let names = ["Vlad", "Sanya", "Miha", "Lexa"];
+
+    commands.spawn_batch(names.into_iter().map(|n| CharacterBundle {
+        name: Name(n.to_string()),
+        health: Health(100.0),
+        hunger: Hunger(100.0),
+        thirst: Thirst(100.0),
+        sleep: Sleep(100.0),
+        position: Position { x: 0.0, y: 0.0 },
+        movement: Movement { speed: 1.0, direction: 0.0 },
+    }));
 }
