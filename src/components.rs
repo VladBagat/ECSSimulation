@@ -25,16 +25,10 @@ pub struct Sleep{
 pub struct Name(pub String);
 
 #[derive(Component)]
-pub struct Position {
-    pub x: f32,
-    pub y: f32,
-}
+pub struct Speed(pub f32);
 
 #[derive(Component)]
-pub struct Movement {
-    pub speed: f32,
-    pub direction: f32,
-}
+pub struct Destination(pub Vec2);
 
 #[derive(Bundle)]
 pub struct CharacterBundle {
@@ -43,12 +37,8 @@ pub struct CharacterBundle {
     pub hunger: Hunger,
     pub thirst: Thirst,
     pub sleep: Sleep,
-    pub position: Position,
-    pub movement: Movement,
-}
-
-#[derive(Bundle)]
-pub struct VisualBundle {
+    pub speed: Speed,
+    pub destination: Destination,
     pub mesh: Mesh2d,
     pub material: MeshMaterial2d<ColorMaterial>,
     pub transform: Transform,

@@ -1,49 +1,72 @@
 mod components;
 
-use bevy::prelude::*;
-use components::{Health, Hunger, Name, Sleep, Thirst, CharacterBundle};
+use core::f32;
 
-use crate::components::{Movement, Position, VisualBundle};
+use bevy::prelude::*;
+use components::{Health, Hunger, Name, Sleep, Thirst, CharacterBundle, Speed, Destination};
 use rand::Rng;
 
-pub struct HelloPlugin;
+pub struct Movement;
 
 #[derive(Resource)]
-struct GreetTimer(Timer);
+struct WorldTimer(Timer);
+
+#[derive(Resource)]
+struct LongBehaviourTimer(Timer);
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(HelloPlugin)
+        .add_plugins(Movement)
         .run();
 }
 
-impl Plugin for HelloPlugin {
+impl Plugin for Movement {
     fn build(&self, app: &mut App) {
-        app.insert_resource(GreetTimer(Timer::from_seconds(1.0, TimerMode::Repeating)));
+        app.insert_resource(WorldTimer(Timer::from_seconds(1.0, TimerMode::Repeating)));
+        app.insert_resource(LongBehaviourTimer(Timer::from_seconds(5.0, TimerMode::Repeating)));
         app.add_systems(Startup, (visual_setup, add_animal));
-        app.add_systems(Update, (update_hunger, update_thirst, update_sleep));
+        app.add_systems(Update, ((update_destination, update_movement).chain(), update_hunger, update_thirst, update_sleep));
     }
 }
 
-fn update_hunger(time: Res<Time>, mut timer: ResMut<GreetTimer>, mut query: Query<&mut Hunger>) {
+fn update_hunger(time: Res<Time>, mut timer: ResMut<WorldTimer>, mut query: Query<&mut Hunger>) {
     if timer.0.tick(time.delta()).just_finished() {
         for mut hunger in &mut query {
             hunger.value = update_parameter(&hunger.value, |x| (hunger.decay)(x));
         }
     }
 }
-fn update_thirst(time: Res<Time>, mut timer: ResMut<GreetTimer>, mut query: Query<&mut Thirst>) {
+fn update_thirst(time: Res<Time>, mut timer: ResMut<WorldTimer>, mut query: Query<&mut Thirst>) {
     if timer.0.tick(time.delta()).just_finished() {
         for mut thirst in &mut query {
             thirst.value = update_parameter(&thirst.value, |x| (thirst.decay)(x));
         }
     }
 }
-fn update_sleep(time: Res<Time>, mut timer: ResMut<GreetTimer>, mut query: Query<&mut Sleep>) {
+fn update_sleep(time: Res<Time>, mut timer: ResMut<WorldTimer>, mut query: Query<&mut Sleep>) {
     if timer.0.tick(time.delta()).just_finished() {
         for mut sleep in &mut query {
             sleep.value = update_parameter(&sleep.value, |x| (sleep.decay)(x));
+        }
+    }
+}
+
+fn update_movement(time: Res<Time>, mut query: Query<(&mut Transform, &Speed, &Destination)>) {
+    for (mut transform, speed, destination) in &mut query {
+        let direction = (destination.0 - transform.translation.truncate()).normalize_or_zero();
+        transform.translation += (direction * speed.0 * time.delta_secs()).extend(0.0);
+    }
+}
+
+fn update_destination(time: Res<Time>, mut timer: ResMut<LongBehaviourTimer>, mut query: Query<(&mut Destination, &Transform)>) {
+    if timer.0.tick(time.delta()).just_finished() {
+        let mut rng = rand::rng();
+        for (mut destination, transform) in &mut query {
+            let current_pos = transform.translation.truncate();
+            let x = rng.random_range(current_pos.x-50.0..=current_pos.x+50.0);
+            let y = rng.random_range(current_pos.y-50.0..=current_pos.y+50.0);
+            destination.0 = Vec2::new(x, y);
         }
     }
 }
@@ -60,10 +83,9 @@ fn add_animal(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    let names = ["Vlad", "Sanya", "Miha", "Lexa", "Vlad", "Sanya", "Miha", "Lexa"];
+    let names = ["Vlad", "Sanya", "Miha", "Lexa", "Vlad", "Sanya", "Miha", "Lexa", "Vlad", "Sanya", "Miha", "Lexa", "Vlad", "Sanya", "Miha", "Lexa"];
     let mut rng = rand::rng();
     let mut bundles = Vec::with_capacity(names.len());
-    let mut visual_bundles = Vec::with_capacity(names.len());
     let mesh_handle = meshes.add(Mesh::from(Circle::new(5.0)));
     let material_handle = materials.add(ColorMaterial::from(Color::hsl(200., 0.95, 0.5)));
     for n in names {
@@ -75,18 +97,14 @@ fn add_animal(
             hunger: Hunger { value: 100.0, decay: |x| x - 1.0 },
             thirst: Thirst { value: 100.0, decay: |x| x - 1.0 },
             sleep: Sleep { value: 100.0, decay: |x| x - 1.0 },
-            position: Position { x, y },
-            movement: Movement { speed: 1.0, direction: 0.0 },
-        });
-        visual_bundles.push(VisualBundle {
+            speed: Speed(15.0),
+            destination: Destination(Vec2 { x: 0.0, y: 0.0 }),
             mesh: Mesh2d(mesh_handle.clone()),
             material: MeshMaterial2d(material_handle.clone()),
             transform: Transform::from_xyz(x, y, 0.0),
         });
     }
-    for (bundle, visual_bundle) in bundles.into_iter().zip(visual_bundles.into_iter()) {
-        commands.spawn((bundle, visual_bundle));
-    }
+    commands.spawn_batch(bundles);
 }
 
 fn visual_setup(mut commands: Commands) {
