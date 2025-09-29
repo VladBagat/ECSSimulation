@@ -1,16 +1,25 @@
-use bevy::prelude::{Component, Bundle};
+use bevy::prelude::*;
 
 #[derive(Component)]
 pub struct Health(pub f32);
 
 #[derive(Component)]
-pub struct Hunger(pub f32);
+pub struct Hunger{
+    pub value: f32,
+    pub decay: fn(&f32) -> f32,
+}
 
 #[derive(Component)]
-pub struct Thirst(pub f32);
+pub struct Thirst{
+    pub value: f32,
+    pub decay: fn(&f32) -> f32,
+}
 
 #[derive(Component)]
-pub struct Sleep(pub f32);
+pub struct Sleep{
+    pub value: f32,
+    pub decay: fn(&f32) -> f32,
+}
 
 #[derive(Component)]
 pub struct Name(pub String);
@@ -27,7 +36,6 @@ pub struct Movement {
     pub direction: f32,
 }
 
-// Group commonly used components for a character/entity into a bundle
 #[derive(Bundle)]
 pub struct CharacterBundle {
     pub name: Name,
@@ -37,4 +45,11 @@ pub struct CharacterBundle {
     pub sleep: Sleep,
     pub position: Position,
     pub movement: Movement,
+}
+
+#[derive(Bundle)]
+pub struct VisualBundle {
+    pub mesh: Mesh2d,
+    pub material: MeshMaterial2d<ColorMaterial>,
+    pub transform: Transform,
 }

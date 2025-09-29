@@ -3,7 +3,8 @@ mod components;
 use bevy::prelude::*;
 use components::{Health, Hunger, Name, Sleep, Thirst, CharacterBundle};
 
-use crate::components::{Movement, Position};
+use crate::components::{Movement, Position, VisualBundle};
+use rand::Rng;
 
 pub struct HelloPlugin;
 
@@ -12,7 +13,7 @@ struct GreetTimer(Timer);
 
 fn main() {
     App::new()
-        .add_plugins(MinimalPlugins)
+        .add_plugins(DefaultPlugins)
         .add_plugins(HelloPlugin)
         .run();
 }
@@ -20,7 +21,7 @@ fn main() {
 impl Plugin for HelloPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(GreetTimer(Timer::from_seconds(1.0, TimerMode::Repeating)));
-        app.add_systems(Startup, add_animal);
+        app.add_systems(Startup, (visual_setup, add_animal));
         app.add_systems(Update, (update_hunger, update_thirst, update_sleep));
     }
 }
@@ -28,21 +29,21 @@ impl Plugin for HelloPlugin {
 fn update_hunger(time: Res<Time>, mut timer: ResMut<GreetTimer>, mut query: Query<&mut Hunger>) {
     if timer.0.tick(time.delta()).just_finished() {
         for mut hunger in &mut query {
-            hunger.0 = update_parameter(&hunger.0, |x: &f32| x - 1.0);
+            hunger.value = update_parameter(&hunger.value, |x| (hunger.decay)(x));
         }
     }
 }
 fn update_thirst(time: Res<Time>, mut timer: ResMut<GreetTimer>, mut query: Query<&mut Thirst>) {
     if timer.0.tick(time.delta()).just_finished() {
         for mut thirst in &mut query {
-            thirst.0 = update_parameter(&thirst.0, |x: &f32| x - 1.0);
+            thirst.value = update_parameter(&thirst.value, |x| (thirst.decay)(x));
         }
     }
 }
 fn update_sleep(time: Res<Time>, mut timer: ResMut<GreetTimer>, mut query: Query<&mut Sleep>) {
     if timer.0.tick(time.delta()).just_finished() {
         for mut sleep in &mut query {
-            sleep.0 = update_parameter(&sleep.0, |x: &f32| x - 1.0);
+            sleep.value = update_parameter(&sleep.value, |x| (sleep.decay)(x));
         }
     }
 }
@@ -54,16 +55,40 @@ where
     f(value)
 }
 
-fn add_animal(mut commands: Commands) {
-    let names = ["Vlad", "Sanya", "Miha", "Lexa"];
+fn add_animal(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let names = ["Vlad", "Sanya", "Miha", "Lexa", "Vlad", "Sanya", "Miha", "Lexa"];
+    let mut rng = rand::rng();
+    let mut bundles = Vec::with_capacity(names.len());
+    let mut visual_bundles = Vec::with_capacity(names.len());
+    let mesh_handle = meshes.add(Mesh::from(Circle::new(5.0)));
+    let material_handle = materials.add(ColorMaterial::from(Color::hsl(200., 0.95, 0.5)));
+    for n in names {
+        let x = rng.random_range(-400.0..=400.0);
+        let y = rng.random_range(-400.0..=400.0);
+        bundles.push(CharacterBundle {
+            name: Name(n.to_string()),
+            health: Health(100.0),
+            hunger: Hunger { value: 100.0, decay: |x| x - 1.0 },
+            thirst: Thirst { value: 100.0, decay: |x| x - 1.0 },
+            sleep: Sleep { value: 100.0, decay: |x| x - 1.0 },
+            position: Position { x, y },
+            movement: Movement { speed: 1.0, direction: 0.0 },
+        });
+        visual_bundles.push(VisualBundle {
+            mesh: Mesh2d(mesh_handle.clone()),
+            material: MeshMaterial2d(material_handle.clone()),
+            transform: Transform::from_xyz(x, y, 0.0),
+        });
+    }
+    for (bundle, visual_bundle) in bundles.into_iter().zip(visual_bundles.into_iter()) {
+        commands.spawn((bundle, visual_bundle));
+    }
+}
 
-    commands.spawn_batch(names.into_iter().map(|n| CharacterBundle {
-        name: Name(n.to_string()),
-        health: Health(100.0),
-        hunger: Hunger(100.0),
-        thirst: Thirst(100.0),
-        sleep: Sleep(100.0),
-        position: Position { x: 0.0, y: 0.0 },
-        movement: Movement { speed: 1.0, direction: 0.0 },
-    }));
+fn visual_setup(mut commands: Commands) {
+    commands.spawn(Camera2d);
 }
