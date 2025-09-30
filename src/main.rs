@@ -26,7 +26,8 @@ impl Plugin for Movement {
     fn build(&self, app: &mut App) {
         app.insert_resource(WorldTimer(Timer::from_seconds(1.0, TimerMode::Repeating)));
         app.insert_resource(LongBehaviourTimer(Timer::from_seconds(5.0, TimerMode::Repeating)));
-        app.add_event::<CollisionEvent>();
+        app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0));
+        app.add_plugins(RapierDebugRenderPlugin::default());
         app.add_systems(Startup, (visual_setup, add_animal, add_food));
         app.add_systems(Update, (update_hunger, update_thirst, update_sleep, pan_camera_on_drag, camera_zoom, display_events));
         app.add_systems(FixedUpdate, (update_destination, update_movement).chain(),);
@@ -113,7 +114,8 @@ fn add_animal(
             material: MeshMaterial2d(material_handle.clone()),
             transform: Transform::from_xyz(x, y, 0.0),
         };
-        let collision = CollisionBundle::circle_sensor(5.0);
+        let collision = CollisionBundle::circle_sensor(
+            5.0, RigidBody::KinematicPositionBased, true);
         bundles.push((character, visuals, collision));
     }
     commands.spawn_batch(bundles);
@@ -140,17 +142,31 @@ fn add_food(
             material: MeshMaterial2d(material_handle.clone()),
             transform: Transform::from_xyz(x, y, 0.0),
         };
-        let collision = CollisionBundle::circle_sensor(5.0);
+        let collision = CollisionBundle::circle_sensor(
+            15.0, RigidBody::Fixed, false);
         bundles.push((food, visuals, collision));
     }
     commands.spawn_batch(bundles);
 }
 
 fn display_events(
+    mut commands: Commands,
     mut collision_events: EventReader<CollisionEvent>,
+    mut contact_force_events: EventReader<ContactForceEvent>
 ) {
     for collision_event in collision_events.read() {
-        println!("Received collision event: {:?}", collision_event);
+        match collision_event {
+            CollisionEvent::Started(entity1, entity2, _flags) => {
+                commands.entity(*entity2).despawn();
+            }
+            CollisionEvent::Stopped(entity1, entity2, _flags) => {
+                
+            }
+        }
+    }
+
+    for contact_force_event in contact_force_events.read() {
+        println!("Received contact force event: {:?}", contact_force_event);
     }
 }
 
