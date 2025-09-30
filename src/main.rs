@@ -26,9 +26,10 @@ impl Plugin for Movement {
     fn build(&self, app: &mut App) {
         app.insert_resource(WorldTimer(Timer::from_seconds(1.0, TimerMode::Repeating)));
         app.insert_resource(LongBehaviourTimer(Timer::from_seconds(5.0, TimerMode::Repeating)));
-        app.add_event::<CollisionEvent>();
+        app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0));
+        app.add_plugins(RapierDebugRenderPlugin::default());
         app.add_systems(Startup, (visual_setup, add_animal, add_food));
-        app.add_systems(Update, (update_hunger, update_thirst, update_sleep, pan_camera_on_drag, camera_zoom, display_events));
+        app.add_systems(Update, (update_hunger, update_thirst, update_sleep, camera_controls, display_events));
         app.add_systems(FixedUpdate, (update_destination, update_movement).chain(),);
     }
 }
@@ -113,7 +114,8 @@ fn add_animal(
             material: MeshMaterial2d(material_handle.clone()),
             transform: Transform::from_xyz(x, y, 0.0),
         };
-        let collision = CollisionBundle::circle_sensor(5.0);
+        let collision = CollisionBundle::circle_sensor(
+            5.0, RigidBody::KinematicPositionBased, true);
         bundles.push((character, visuals, collision));
     }
     commands.spawn_batch(bundles);
@@ -140,59 +142,66 @@ fn add_food(
             material: MeshMaterial2d(material_handle.clone()),
             transform: Transform::from_xyz(x, y, 0.0),
         };
-        let collision = CollisionBundle::circle_sensor(5.0);
+        let collision = CollisionBundle::circle_sensor(
+            15.0, RigidBody::Fixed, false);
         bundles.push((food, visuals, collision));
     }
     commands.spawn_batch(bundles);
 }
 
 fn display_events(
+    mut commands: Commands,
     mut collision_events: EventReader<CollisionEvent>,
+    mut contact_force_events: EventReader<ContactForceEvent>
 ) {
     for collision_event in collision_events.read() {
-        println!("Received collision event: {:?}", collision_event);
-    }
-}
-
-fn pan_camera_on_drag(
-    mut mouse_motion_events: EventReader<MouseMotion>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    mut query: Query<&mut Transform, With<Camera>>,
-) {
-    if !buttons.pressed(MouseButton::Left) {
-        return;
-    }
-
-    let mut delta = Vec2::ZERO;
-    for ev in mouse_motion_events.read() {
-        delta += ev.delta;
-    }
-
-    if delta != Vec2::ZERO {
-        let mut transform = query.single_mut().unwrap();
-        transform.translation.x -= delta.x;
-        transform.translation.y += delta.y;
-    }
-}
-
-fn camera_zoom(
-    mut scroll_evr: EventReader<MouseWheel>,
-    mut query: Query<&mut Projection, With<Camera2d>>,
-    time: Res<Time<Fixed>>
-) {
-    let Ok(mut projection) = query.single_mut() else {
-        return;
-    };
-
-    if let Projection::Orthographic(projection2d) = &mut *projection {
-        for ev in scroll_evr.read() {
-            if ev.y > 0. {
-                projection2d.scale *= powf(0.25f32, time.delta_secs());
+        match collision_event {
+            CollisionEvent::Started(entity1, entity2, _flags) => {
+                commands.entity(*entity2).despawn();
             }
-            else if ev.y < 0. {
-                projection2d.scale *= powf(4.0f32, time.delta_secs());
+            CollisionEvent::Stopped(entity1, entity2, _flags) => {
+                
             }
         }
+    }
+
+    for contact_force_event in contact_force_events.read() {
+        println!("Received contact force event: {:?}", contact_force_event);
+    }
+}
+
+fn camera_controls(
+    mut mouse_motion_events: EventReader<MouseMotion>,
+    mut scroll_events: EventReader<MouseWheel>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    mut query: Query<(&mut Transform, &mut Projection), With<Camera2d>>,
+    time: Res<Time>,
+) {
+    let Ok((mut transform, mut projection)) = query.single_mut() else { return; };
+
+    if buttons.pressed(MouseButton::Left) {
+        let mut drag_delta = Vec2::ZERO;
+        for ev in mouse_motion_events.read() { drag_delta += ev.delta; }
+        if drag_delta != Vec2::ZERO {
+            transform.translation.x -= drag_delta.x;
+            transform.translation.y += drag_delta.y;
+        }
+    } else {
+        for _ in mouse_motion_events.read() {}
+    }
+
+    if let Projection::Orthographic(ortho) = &mut *projection {
+        let dt = time.delta_secs();
+        for ev in scroll_events.read() {
+            if ev.y > 0.0 { // zoom in
+                ortho.scale *= powf(0.0625, dt);
+            } else if ev.y < 0.0 { // zoom out
+                ortho.scale *= powf(16., dt);
+            }
+        }
+        ortho.scale = ortho.scale.clamp(0.05, 50.0);
+    } else {
+        for _ in scroll_events.read() {}
     }
 }
 

@@ -63,14 +63,18 @@ pub struct CollisionBundle {
     pub collider: Collider,
     pub sensor: Sensor,
     pub collision_types: ActiveCollisionTypes,
+    pub rigidbody: RigidBody,
+    pub active_events: ActiveEvents,
 }
 
 impl CollisionBundle {
-    pub fn circle_sensor(radius: f32) -> Self {
+    pub fn circle_sensor(radius: f32, rb_type: RigidBody, events: bool) -> Self {
         Self {
             collider: Collider::ball(radius),
             sensor: Sensor,
-            collision_types: ActiveCollisionTypes::default(),
+            collision_types: ActiveCollisionTypes::all(),
+            active_events: if events {ActiveEvents::COLLISION_EVENTS } else { ActiveEvents::empty() },
+            rigidbody: rb_type
         }
     }
 }
