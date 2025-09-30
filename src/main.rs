@@ -2,9 +2,10 @@ mod components;
 
 use core::f32;
 
-use bevy::{input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel}, math::ops::powf, prelude::*};
+use bevy::{input::mouse::{MouseMotion, MouseWheel}, math::ops::powf, prelude::*};
 use components::*;
 use rand::Rng;
+use bevy_rapier2d::prelude::*;
 
 pub struct Movement;
 
@@ -25,8 +26,9 @@ impl Plugin for Movement {
     fn build(&self, app: &mut App) {
         app.insert_resource(WorldTimer(Timer::from_seconds(1.0, TimerMode::Repeating)));
         app.insert_resource(LongBehaviourTimer(Timer::from_seconds(5.0, TimerMode::Repeating)));
+        app.add_event::<CollisionEvent>();
         app.add_systems(Startup, (visual_setup, add_animal, add_food));
-        app.add_systems(Update, (update_hunger, update_thirst, update_sleep, pan_camera_on_drag, camera_zoom));
+        app.add_systems(Update, (update_hunger, update_thirst, update_sleep, pan_camera_on_drag, camera_zoom, display_events));
         app.add_systems(FixedUpdate, (update_destination, update_movement).chain(),);
     }
 }
@@ -97,7 +99,7 @@ fn add_animal(
     for n in names {
         let x = rng.random_range(-400.0..=400.0);
         let y = rng.random_range(-400.0..=400.0);
-        bundles.push(CharacterBundle {
+        let character = CharacterBundle {
             name: Name(n.to_string()),
             health: Health(100.0),
             hunger: Hunger { value: 100.0, decay: |x| x - 1.0 },
@@ -105,10 +107,14 @@ fn add_animal(
             sleep: Sleep { value: 100.0, decay: |x| x - 1.0 },
             speed: Speed(35.0),
             destination: Destination(Vec2 { x: 0.0, y: 0.0 }),
+        };
+        let visuals = VisualBundle {
             mesh: Mesh2d(mesh_handle.clone()),
             material: MeshMaterial2d(material_handle.clone()),
             transform: Transform::from_xyz(x, y, 0.0),
-        });
+        };
+        let collision = CollisionBundle::circle_sensor(5.0);
+        bundles.push((character, visuals, collision));
     }
     commands.spawn_batch(bundles);
 }
@@ -118,23 +124,34 @@ fn add_food(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    let foods = ["Pizza", "Burger", "Pasta", "Sushi", "Taco", "Salad", "Steak", "Ramen", "Donut", "Toast", "Curry", "Kebab", "Soup", "Bagel", "Fries", "Wrap"];
     let mut rng = rand::rng();
-    let mut bundles = Vec::with_capacity(foods.len());
+    let mut bundles = Vec::with_capacity(200);
     let mesh_handle = meshes.add(Mesh::from(Circle::new(5.0)));
     let material_handle = materials.add(ColorMaterial::from(Color::hsl(21., 1., 0.356)));
-    for n in foods {
+    for i in 0..200 {
         let x = rng.random_range(-600.0..=600.0);
         let y = rng.random_range(-600.0..=600.0);
-        bundles.push(FoodBundle {
-            name: Name(n.to_string()),
+        let food = FoodBundle {
+            name: Name(i.to_string()),
             food: Food(30.),
+        };
+        let visuals = VisualBundle {
             mesh: Mesh2d(mesh_handle.clone()),
             material: MeshMaterial2d(material_handle.clone()),
             transform: Transform::from_xyz(x, y, 0.0),
-        });
+        };
+        let collision = CollisionBundle::circle_sensor(5.0);
+        bundles.push((food, visuals, collision));
     }
     commands.spawn_batch(bundles);
+}
+
+fn display_events(
+    mut collision_events: EventReader<CollisionEvent>,
+) {
+    for collision_event in collision_events.read() {
+        println!("Received collision event: {:?}", collision_event);
+    }
 }
 
 fn pan_camera_on_drag(

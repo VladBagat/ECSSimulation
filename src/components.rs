@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_rapier2d::prelude::*;
 
 #[derive(Component)]
 pub struct Health(pub f32);
@@ -42,16 +43,34 @@ pub struct CharacterBundle {
     pub sleep: Sleep,
     pub speed: Speed,
     pub destination: Destination,
-    pub mesh: Mesh2d,
-    pub material: MeshMaterial2d<ColorMaterial>,
-    pub transform: Transform,
 }
 
 #[derive(Bundle)]
 pub struct FoodBundle {
     pub name: Name,
     pub food: Food,
+}
+
+#[derive(Bundle)]
+pub struct VisualBundle {
     pub mesh: Mesh2d,
     pub material: MeshMaterial2d<ColorMaterial>,
     pub transform: Transform,
+}
+
+#[derive(Bundle)]
+pub struct CollisionBundle {
+    pub collider: Collider,
+    pub sensor: Sensor,
+    pub collision_types: ActiveCollisionTypes,
+}
+
+impl CollisionBundle {
+    pub fn circle_sensor(radius: f32) -> Self {
+        Self {
+            collider: Collider::ball(radius),
+            sensor: Sensor,
+            collision_types: ActiveCollisionTypes::default(),
+        }
+    }
 }
