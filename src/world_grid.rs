@@ -8,14 +8,16 @@ pub struct Tile {
 #[derive(Clone, Debug, Default, Resource)]
 pub struct WorldGrid {
     tiles: Vec<Tile>,
+    scale: u16,
     width: u32,
     height: u32,
 }
 
 impl WorldGrid {
-    pub fn new(height: u32, width: u32) -> WorldGrid {
+    pub fn new(height: u32, width: u32, scale: u16) -> WorldGrid {
         Self {
             tiles: vec![Tile::default(); (height * width) as usize],
+            scale,
             width,
             height,
         }

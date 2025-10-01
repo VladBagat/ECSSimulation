@@ -30,7 +30,7 @@ impl Plugin for Movement {
         app.insert_resource(LongBehaviourTimer(Timer::from_seconds(5.0, TimerMode::Repeating)));
         app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0));
         app.add_plugins(RapierDebugRenderPlugin::default());
-        app.insert_resource(WorldGrid::new(640, 640));
+        app.insert_resource(WorldGrid::new(640, 640, 100));
         app.add_systems(Startup, (visual_setup, add_animal, add_food));
         app.add_systems(Update, (update_hunger, update_thirst, update_sleep, pan_camera_on_drag, camera_zoom, display_events, draw_world_grid));
         app.add_systems(FixedUpdate, (update_destination, update_movement).chain(),);
