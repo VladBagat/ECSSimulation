@@ -30,7 +30,7 @@ impl Plugin for Movement {
         app.insert_resource(LongBehaviourTimer(Timer::from_seconds(5.0, TimerMode::Repeating)));
         app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0));
         app.add_plugins(RapierDebugRenderPlugin::default());
-        app.insert_resource(WorldGrid::new(640, 640, 100));
+        app.insert_resource(WorldGrid::new(160, 160, 25));
         app.add_systems(Startup, (visual_setup, add_animal, add_food));
         app.add_systems(Update, (update_hunger, update_thirst, update_sleep, pan_camera_on_drag, camera_zoom, display_events, draw_world_grid));
         app.add_systems(FixedUpdate, (update_destination, update_movement).chain(),);
@@ -224,31 +224,34 @@ fn visual_setup(mut commands: Commands) {
     ));
 }
 
-// this works but the scale is fucked up
 fn draw_world_grid(mut gizmos: Gizmos, grid: Res<WorldGrid>) {
-    let width = grid.width() as f32;
-    let height = grid.height() as f32;
-    if width == 0.0 || height == 0.0 {
+    let tiles_wide = grid.width() as f32;
+    let tiles_high = grid.height() as f32;
+    let tile_size = grid.scale() as f32;
+
+    if tiles_wide == 0.0 || tiles_high == 0.0 || tile_size == 0.0 {
         return;
     }
 
-    let origin = Vec2::new(-width / 2.0, -height / 2.0);
+    let total_width = tiles_wide * tile_size;
+    let total_height = tiles_high * tile_size;
+    let origin = Vec2::new(-total_width / 2.0, -total_height / 2.0);
     let color = Color::srgba(0., 1., 0., 0.75);
 
     for x in 0..=grid.width() {
-        let x_pos = origin.x + x as f32;
+        let x_pos = origin.x + (x as f32 * tile_size);
         gizmos.line_2d(
             Vec2::new(x_pos, origin.y),
-            Vec2::new(x_pos, origin.y + height),
+            Vec2::new(x_pos, origin.y + total_height),
             color,
         );
     }
 
     for y in 0..=grid.height() {
-        let y_pos = origin.y + y as f32;
+        let y_pos = origin.y + (y as f32 * tile_size);
         gizmos.line_2d(
             Vec2::new(origin.x, y_pos),
-            Vec2::new(origin.x + width, y_pos),
+            Vec2::new(origin.x + total_width, y_pos),
             color,
         );
     }

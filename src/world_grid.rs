@@ -31,6 +31,11 @@ impl WorldGrid {
         self.height
     }
 
+    pub fn scale(&self) -> u32 {
+        self.scale as u32
+    }
+
+
     fn vec2_to_index(&self, coords: Vec2) -> Option<usize> {
         let x = coords.x.floor() as i32;
         let y = coords.y.floor() as i32;
