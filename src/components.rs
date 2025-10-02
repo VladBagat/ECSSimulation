@@ -34,6 +34,9 @@ pub struct Destination(pub Vec2);
 #[derive(Component)]
 pub struct Food(pub f32);
 
+#[derive(Component)]
+pub struct TrackedByKDTree;
+
 #[derive(Bundle)]
 pub struct CharacterBundle {
     pub name: Name,
@@ -43,12 +46,14 @@ pub struct CharacterBundle {
     pub sleep: Sleep,
     pub speed: Speed,
     pub destination: Destination,
+    pub tracked: TrackedByKDTree,
 }
 
 #[derive(Bundle)]
 pub struct FoodBundle {
     pub name: Name,
     pub food: Food,
+    pub tracked: TrackedByKDTree,
 }
 
 #[derive(Bundle)]

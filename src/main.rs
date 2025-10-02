@@ -2,12 +2,14 @@ mod components;
 mod world_grid;
 
 use core::f32;
+use std::time::Duration;
 
 use bevy::{input::mouse::{MouseMotion, MouseWheel}, math::ops::powf, prelude::*};
 use components::*;
 use world_grid::WorldGrid;
 use rand::Rng;
 use bevy_rapier2d::prelude::*;
+use bevy_spatial::{kdtree::KDTree2, AutomaticUpdate, SpatialAccess, SpatialStructure, TransformMode};
 
 pub struct Movement;
 
@@ -16,6 +18,8 @@ struct WorldTimer(Timer);
 
 #[derive(Resource)]
 struct LongBehaviourTimer(Timer);
+
+type NNTree = KDTree2<TrackedByKDTree>;
 
 fn main() {
     App::new()
@@ -26,14 +30,33 @@ fn main() {
 
 impl Plugin for Movement {
     fn build(&self, app: &mut App) {
-        app.insert_resource(WorldTimer(Timer::from_seconds(1.0, TimerMode::Repeating)));
-        app.insert_resource(LongBehaviourTimer(Timer::from_seconds(5.0, TimerMode::Repeating)));
-        app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0));
-        app.add_plugins(RapierDebugRenderPlugin::default());
-        app.insert_resource(WorldGrid::new(160, 160, 25));
-        app.add_systems(Startup, (visual_setup, add_animal, add_food));
-        app.add_systems(Update, (update_hunger, update_thirst, update_sleep, camera_controls, display_events, draw_world_grid));
-        app.add_systems(FixedUpdate, (update_destination, update_movement).chain(),);
+        app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
+        .add_plugins(RapierDebugRenderPlugin::default())
+        .add_plugins(AutomaticUpdate::<TrackedByKDTree>::new()
+            .with_frequency(Duration::from_secs_f32(0.3))
+            .with_transform(TransformMode::GlobalTransform)
+            .with_spatial_ds(SpatialStructure::KDTree2))
+        .insert_resource(WorldTimer(Timer::from_seconds(1.0, TimerMode::Repeating)))
+        .insert_resource(LongBehaviourTimer(Timer::from_seconds(5.0, TimerMode::Repeating)))
+        .insert_resource(WorldGrid::new(160, 160, 25))
+        .add_systems(Startup, (visual_setup, add_animal, add_food))
+        .add_systems(Update, (update_hunger, update_thirst, update_sleep, camera_controls))
+        .add_systems(Update, (display_events, draw_world_grid, test_tree))
+        .add_systems(FixedUpdate, (update_destination, update_movement).chain());
+    }
+}
+fn test_tree(
+    tree: Res<NNTree>,
+    query: Query<&Transform, (With<Speed>, With<Destination>)>,
+    mut gizmos: Gizmos
+) {
+    let radius: f32 = 50.;
+    let color = Color::srgba(0.75, 0.75, 0., 0.75);
+    for hero_pos in query {
+        gizmos.circle_2d(hero_pos.translation.truncate(), radius, color);
+        for (position, entity) in tree.within_distance(hero_pos.translation.truncate(), radius) {
+            println!("Found {:?} at {}", entity, position)
+        }
     }
 }
 
@@ -99,7 +122,6 @@ fn add_animal(
     let mut rng = rand::rng();
     let mut bundles = Vec::with_capacity(names.len());
     let mesh_handle = meshes.add(Mesh::from(Circle::new(5.0)));
-    let material_handle = materials.add(ColorMaterial::from(Color::hsl(200., 0.95, 0.5)));
     for n in names {
         let x = rng.random_range(-400.0..=400.0);
         let y = rng.random_range(-400.0..=400.0);
@@ -111,10 +133,14 @@ fn add_animal(
             sleep: Sleep { value: 100.0, decay: |x| x - 1.0 },
             speed: Speed(35.0),
             destination: Destination(Vec2 { x: 0.0, y: 0.0 }),
+            tracked: TrackedByKDTree,
         };
+
+        let material_handle = materials.add(ColorMaterial::from(Color::hsl(200., 0.95, 0.5)));
+    
         let visuals = VisualBundle {
             mesh: Mesh2d(mesh_handle.clone()),
-            material: MeshMaterial2d(material_handle.clone()),
+            material: MeshMaterial2d(material_handle),
             transform: Transform::from_xyz(x, y, 0.0),
         };
         let collision = CollisionBundle::circle_sensor(
@@ -139,6 +165,7 @@ fn add_food(
         let food = FoodBundle {
             name: Name(i.to_string()),
             food: Food(30.),
+            tracked: TrackedByKDTree,
         };
         let visuals = VisualBundle {
             mesh: Mesh2d(mesh_handle.clone()),
@@ -220,7 +247,7 @@ fn draw_world_grid(mut gizmos: Gizmos, grid: Res<WorldGrid>) {
     let tile_size = grid.scale() as f32;
 
     if tiles_wide == 0.0 || tiles_high == 0.0 || tile_size == 0.0 {
-        return;
+        panic!("Recieved 0 size world grid")
     }
 
     let total_width = tiles_wide * tile_size;
