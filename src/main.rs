@@ -5,7 +5,7 @@ use core::f32;
 use std::time::Duration;
 
 use bevy::{input::mouse::{MouseMotion, MouseWheel}, math::ops::powf, prelude::*};
-use components::*;
+use components::{*, Velocity};
 use world_grid::WorldGrid;
 use rand::Rng;
 use bevy_rapier2d::prelude::*;
@@ -42,22 +42,46 @@ impl Plugin for Movement {
         .add_systems(Startup, (visual_setup, add_animal, add_food))
         .add_systems(Update, (update_hunger, update_thirst, update_sleep, camera_controls))
         .add_systems(Update, (display_events, draw_world_grid, test_tree))
-        .add_systems(FixedUpdate, (update_destination, update_movement).chain());
+        .add_systems(FixedUpdate, (update_movement).chain());
     }
 }
 fn test_tree(
+    time: Res<Time>,
+    mut timer: ResMut<LongBehaviourTimer>,
     tree: Res<NNTree>,
-    query: Query<&Transform, (With<Speed>, With<Destination>)>,
+    query: Query<(Entity, &Transform), (With<Speed>, With<Destination>)>,
+    food_query: Query<&Transform, With<Food>>,
+    mut destination_query: Query<&mut Destination>,
     mut gizmos: Gizmos
 ) {
-    let radius: f32 = 50.;
-    let color = Color::srgba(0.75, 0.75, 0., 0.75);
-    for hero_pos in query {
-        gizmos.circle_2d(hero_pos.translation.truncate(), radius, color);
-        for (position, entity) in tree.within_distance(hero_pos.translation.truncate(), radius) {
-            println!("Found {:?} at {}", entity, position)
+    let radius: f32 = 75.; //TODO: This should be some entity stat. preferable with variability
+    let color = Color::srgba(0.75, 0.75, 0., 0.75); // Move all gizmos to a separate system?
+    for (hero_entity, hero_pos) in query {
+        let origin = hero_pos.translation.truncate();
+        gizmos.circle_2d(origin, radius, color);
+        let objects_prox = tree.within_distance(origin, radius);
+        let mut items: Vec<(f32, Vec2, Option<Entity>)> = objects_prox
+            .into_iter()
+            .map(|(v, e)| (origin.distance(v), v, e))
+            .collect();
+
+        //Sorts all entities found by within_distance
+        items.sort_by(|a, b| a.0.total_cmp(&b.0));
+        
+        //Picking direction for food
+        for (_distance, position, entity) in &items {
+            if let Ok(pos) = food_query.get(entity.unwrap()) {
+                if let Ok(mut dest) = destination_query.get_mut(hero_entity) {
+                    dest.0 = pos.translation.truncate();
+                    break;
+                }
+            }
         }
-    }
+        
+        for (_distance, position, entity) in items {
+            gizmos.line_2d(position, origin, color);
+        }
+    } 
 }
 
 fn update_hunger(time: Res<Time>, mut timer: ResMut<WorldTimer>, mut query: Query<&mut Hunger>) {
@@ -82,18 +106,35 @@ fn update_sleep(time: Res<Time>, mut timer: ResMut<WorldTimer>, mut query: Query
     }
 }
 
-fn update_movement(time: Res<Time>, mut query: Query<(&mut Transform, &Speed, &Destination)>) {
-    for (mut transform, speed, destination) in &mut query {
+//TODO: This works fine but needs some tuning to be good
+fn update_movement(
+    time: Res<Time>,
+    mut query: Query<(&mut Transform, &Speed, &Destination, &mut Velocity)>
+) {
+    let slowing_distance = 75.0;
+
+    for (mut transform, speed, destination, mut velocity) in &mut query {
         let delta = destination.0 - transform.translation.truncate();
         let distance = delta.length();
-        if distance < 0.5 {
+        if distance < 1.0 {
+            **velocity = Vec2::ZERO;
             continue;
         }
-        let direction = delta / distance;
-        transform.translation += (direction * speed.0 * time.delta_secs()).extend(0.0);
+
+        let ramped_speed = speed.0 * (distance / slowing_distance);
+        let clipped_speed = ramped_speed.min(speed.0);
+
+        let desired_velocity = (clipped_speed / distance) * delta;
+        let steering = desired_velocity - **velocity;
+
+        let damping = 0.999;
+        **velocity = (**velocity + steering * time.delta_secs()) * damping;
+
+        transform.translation += (**velocity * time.delta_secs()).extend(0.0);
     }
 }
 
+//TODO: Add wandering behaviour.
 fn update_destination(time: Res<Time>, mut timer: ResMut<LongBehaviourTimer>, mut query: Query<(&mut Destination, &Transform)>) {
     if timer.0.tick(time.delta()).just_finished() {
         let mut rng = rand::rng();
@@ -131,7 +172,8 @@ fn add_animal(
             hunger: Hunger { value: 100.0, decay: |x| x - 1.0 },
             thirst: Thirst { value: 100.0, decay: |x| x - 1.0 },
             sleep: Sleep { value: 100.0, decay: |x| x - 1.0 },
-            speed: Speed(35.0),
+            speed: Speed(50.0),
+            velocity: Velocity(Vec2::ZERO),
             destination: Destination(Vec2 { x: 0.0, y: 0.0 }),
             tracked: TrackedByKDTree,
         };
@@ -173,7 +215,7 @@ fn add_food(
             transform: Transform::from_xyz(x, y, 0.0),
         };
         let collision = CollisionBundle::circle_sensor(
-            15.0, RigidBody::Fixed, false);
+            5.0, RigidBody::Fixed, false);
         bundles.push((food, visuals, collision));
     }
     commands.spawn_batch(bundles);
@@ -182,14 +224,16 @@ fn add_food(
 fn display_events(
     mut commands: Commands,
     mut collision_events: EventReader<CollisionEvent>,
-    mut contact_force_events: EventReader<ContactForceEvent>
+    mut contact_force_events: EventReader<ContactForceEvent>,
+    food_query: Query<(), With<Food>>
 ) {
     for collision_event in collision_events.read() {
-        match collision_event {
-            CollisionEvent::Started(_entity1, entity2, _flags) => {
-                commands.entity(*entity2).despawn();
+        if let CollisionEvent::Started(entity1, entity2, _flags) = collision_event {
+            for entity in [entity1, entity2] {
+                if food_query.get(*entity).is_ok() {
+                    commands.entity(*entity).despawn();
+                }
             }
-            CollisionEvent::Stopped(_entity1, _entity2, _flags) => {}
         }
     }
     for contact_force_event in contact_force_events.read() {
@@ -253,7 +297,7 @@ fn draw_world_grid(mut gizmos: Gizmos, grid: Res<WorldGrid>) {
     let total_width = tiles_wide * tile_size;
     let total_height = tiles_high * tile_size;
     let origin = Vec2::new(-total_width / 2.0, -total_height / 2.0);
-    let color = Color::srgba(0., 1., 0., 0.75);
+    let color = Color::srgba(0., 1., 0., 0.2);
 
     for x in 0..=grid.width() {
         let x_pos = origin.x + (x as f32 * tile_size);

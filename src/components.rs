@@ -28,6 +28,9 @@ pub struct Name(pub String);
 #[derive(Component)]
 pub struct Speed(pub f32);
 
+#[derive(Component, DerefMut, Deref)]
+pub struct Velocity(pub Vec2);
+
 #[derive(Component)]
 pub struct Destination(pub Vec2);
 
@@ -45,6 +48,7 @@ pub struct CharacterBundle {
     pub thirst: Thirst,
     pub sleep: Sleep,
     pub speed: Speed,
+    pub velocity: Velocity,
     pub destination: Destination,
     pub tracked: TrackedByKDTree,
 }
