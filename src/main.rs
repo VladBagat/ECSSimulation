@@ -19,8 +19,6 @@ struct WorldTimer(Timer);
 #[derive(Resource)]
 struct LongBehaviourTimer(Timer);
 
-type NNTree = KDTree2<TrackedByKDTree>;
-
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -32,7 +30,7 @@ impl Plugin for Movement {
     fn build(&self, app: &mut App) {
         app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
         .add_plugins(RapierDebugRenderPlugin::default())
-        .add_plugins(AutomaticUpdate::<TrackedByKDTree>::new()
+        .add_plugins(AutomaticUpdate::<FoodTracking>::new()
             .with_frequency(Duration::from_secs_f32(0.3))
             .with_transform(TransformMode::GlobalTransform)
             .with_spatial_ds(SpatialStructure::KDTree2))
@@ -46,11 +44,8 @@ impl Plugin for Movement {
     }
 }
 fn test_tree(
-    time: Res<Time>,
-    mut timer: ResMut<LongBehaviourTimer>,
-    tree: Res<NNTree>,
+    tree: Res<KDTree2<FoodTracking>>,
     query: Query<(Entity, &Transform), (With<Speed>, With<Destination>)>,
-    food_query: Query<&Transform, With<Food>>,
     mut destination_query: Query<&mut Destination>,
     mut gizmos: Gizmos
 ) {
@@ -60,26 +55,29 @@ fn test_tree(
         let origin = hero_pos.translation.truncate();
         gizmos.circle_2d(origin, radius, color);
         let objects_prox = tree.within_distance(origin, radius);
-        let mut items: Vec<(f32, Vec2, Option<Entity>)> = objects_prox
-            .into_iter()
-            .map(|(v, e)| (origin.distance(v), v, e))
-            .collect();
+        if objects_prox.len() != 0 {
+            let mut items: Vec<(f32, Vec2, Option<Entity>)> = objects_prox
+                .into_iter()
+                .map(|(v, e)| (origin.distance(v), v, e))
+                .collect();
 
-        //Sorts all entities found by within_distance
-        items.sort_by(|a, b| a.0.total_cmp(&b.0));
-        
-        //Picking direction for food
-        for (_distance, position, entity) in &items {
-            if let Ok(pos) = food_query.get(entity.unwrap()) {
+            //Sorts all entities found by within_distance
+            items.sort_by(|a, b| a.0.total_cmp(&b.0));
+            
+            //Picking direction for food
+            for (_distance, position, _entity) in &items {
                 if let Ok(mut dest) = destination_query.get_mut(hero_entity) {
-                    dest.0 = pos.translation.truncate();
+                    dest.0 = *position;
                     break;
                 }
             }
+            //Debug
+            for (_distance, position, _entity) in items {
+                gizmos.line_2d(position, origin, color);
+            }
         }
-        
-        for (_distance, position, entity) in items {
-            gizmos.line_2d(position, origin, color);
+        else {
+            println!("Run out of food!")
         }
     } 
 }
@@ -127,7 +125,7 @@ fn update_movement(
         let desired_velocity = (clipped_speed / distance) * delta;
         let steering = desired_velocity - **velocity;
 
-        let damping = 0.999;
+        let damping = 1.0;
         **velocity = (**velocity + steering * time.delta_secs()) * damping;
 
         transform.translation += (**velocity * time.delta_secs()).extend(0.0);
@@ -159,7 +157,7 @@ fn add_animal(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    let names = ["Vlad", "Sanya", "Miha", "Lexa", "Vlad", "Sanya", "Miha", "Lexa", "Vlad", "Sanya", "Miha", "Lexa", "Vlad", "Sanya", "Miha", "Lexa"];
+    let names = ["Vlad"];
     let mut rng = rand::rng();
     let mut bundles = Vec::with_capacity(names.len());
     let mesh_handle = meshes.add(Mesh::from(Circle::new(5.0)));
@@ -207,7 +205,7 @@ fn add_food(
         let food = FoodBundle {
             name: Name(i.to_string()),
             food: Food(30.),
-            tracked: TrackedByKDTree,
+            tracked: FoodTracking,
         };
         let visuals = VisualBundle {
             mesh: Mesh2d(mesh_handle.clone()),
