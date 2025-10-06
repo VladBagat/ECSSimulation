@@ -68,8 +68,8 @@ impl Plugin for Movement {
             overlaps: HashSet::default()
         })
         .add_systems(Startup, ((setup_common_materials, visual_setup, add_animal, add_food, draw_grid_enum)).chain())
-        .add_systems(Update, (update_hunger, update_thirst, update_sleep))
-        .add_systems(Update, (handle_food_collisions, handle_building_collisions, test_tree, draw_world_grid, select_building))
+        .add_systems(Update, (update_hunger, update_thirst, update_sleep, select_building))
+        .add_systems(Update, (handle_food_collisions, handle_building_collisions, test_tree, draw_world_grid))
         .add_systems(FixedUpdate, (update_movement).chain());
     }
 }
@@ -513,7 +513,6 @@ fn select_building(
         let ray_pos ;
         if let Some(last) = events.read().last().copied() {
             ray_pos = last.world;
-            println!("{:?}", last.world)
         }
         else {
             return;
@@ -526,7 +525,9 @@ fn select_building(
 
         if let Some((entity, toi)) = rapier_context.cast_ray(ray_pos, ray_dir, max_toi, solid, filter) {
             let hit_point = ray_pos + ray_dir * toi;
-            println!("Entity {:?} hit at point {}", entity, hit_point);
+            //for now let any object get the context menu
+            // TODO: Repurpose this for event emmiter and create separate building context menu event subscriber.
+            
         }
     }
 }
