@@ -1,11 +1,13 @@
 mod components;
+mod materials;
 mod world_grid;
 
 use core::f32;
 use std::time::Duration;
 
-use bevy::{input::mouse::{MouseMotion, MouseWheel}, math::ops::powf, prelude::*};
+use bevy::{input::mouse::{MouseMotion, MouseWheel}, math::ops::powf, platform::collections::HashSet, prelude::*};
 use components::{*, Velocity};
+use materials::{CommonMaterials, setup_common_materials};
 use world_grid::WorldGrid;
 use rand::Rng;
 use bevy_rapier2d::prelude::*;
@@ -13,8 +15,29 @@ use bevy_spatial::{kdtree::KDTree2, AutomaticUpdate, SpatialAccess, SpatialStruc
 
 pub struct Movement;
 
+pub struct CameraControls;
+
+// Global cursor event so multiple systems can subscribe without relying on shared state
+#[derive(Event, Debug, Clone, Copy)]
+struct CursorWorldEvent {
+    /// Cursor position in window/screen coordinates (pixels)
+    screen: Vec2,
+    /// Cursor position in world coordinates
+    world: Vec2,
+    /// Cursor position snapped to grid cells (in grid coordinates)
+    grid: Vec2,
+}
+
 #[derive(Resource)]
 struct WorldTimer(Timer);
+
+#[derive(Resource)]
+struct TempState{
+    building_mode: bool,
+    cur_cel: Vec2,
+    cur_building: Option<Entity>,
+    overlaps: HashSet<Entity>,
+}
 
 #[derive(Resource)]
 struct LongBehaviourTimer(Timer);
@@ -23,6 +46,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(Movement)
+        .add_plugins(CameraControls)
         .run();
 }
 
@@ -31,18 +55,43 @@ impl Plugin for Movement {
         app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
         .add_plugins(RapierDebugRenderPlugin::default())
         .add_plugins(AutomaticUpdate::<FoodTracking>::new()
-            .with_frequency(Duration::from_secs_f32(0.3))
+            .with_frequency(Duration::from_secs_f32(1.))
             .with_transform(TransformMode::GlobalTransform)
             .with_spatial_ds(SpatialStructure::KDTree2))
         .insert_resource(WorldTimer(Timer::from_seconds(1.0, TimerMode::Repeating)))
         .insert_resource(LongBehaviourTimer(Timer::from_seconds(5.0, TimerMode::Repeating)))
         .insert_resource(WorldGrid::new(160, 160, 25))
-        .add_systems(Startup, (visual_setup, add_animal, add_food))
-        .add_systems(Update, (update_hunger, update_thirst, update_sleep, camera_controls))
-        .add_systems(Update, (display_events, draw_world_grid, test_tree))
+        .insert_resource(TempState {
+            building_mode: false,
+            cur_cel: Vec2::default(),
+            cur_building: None,
+            overlaps: HashSet::default()
+        })
+        .add_systems(Startup, ((setup_common_materials, visual_setup, add_animal, add_food, draw_grid_enum)).chain())
+        .add_systems(Update, (update_hunger, update_thirst, update_sleep))
+        .add_systems(Update, (handle_food_collisions, handle_building_collisions, test_tree, draw_world_grid, select_building))
         .add_systems(FixedUpdate, (update_movement).chain());
     }
 }
+
+impl Plugin for CameraControls {
+    fn build(&self, app: &mut App) {
+        app
+            // Register a global event for cursor world/grid position
+            .add_event::<CursorWorldEvent>()
+            // Systems
+            .add_systems(
+                Update,
+                (
+                    track_mouse_world_position, // emit cursor event
+                    cursor_event_to_state,       // keep TempState.cur_cel in sync for legacy users
+                    camera_controls,
+                    building_prototype,
+                ),
+            );
+    }
+}
+
 fn test_tree(
     tree: Res<KDTree2<FoodTracking>>,
     query: Query<(Entity, &Transform), (With<Speed>, With<Destination>)>,
@@ -77,7 +126,7 @@ fn test_tree(
             }
         }
         else {
-            println!("Run out of food!")
+            //println!("Run out of food!")
         }
     } 
 }
@@ -155,7 +204,7 @@ where
 fn add_animal(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    common_materials: Res<CommonMaterials>,
 ) {
     let names = ["Vlad"];
     let mut rng = rand::rng();
@@ -176,7 +225,7 @@ fn add_animal(
             tracked: TrackedByKDTree,
         };
 
-        let material_handle = materials.add(ColorMaterial::from(Color::hsl(200., 0.95, 0.5)));
+        let material_handle = common_materials.hero.clone();
     
         let visuals = VisualBundle {
             mesh: Mesh2d(mesh_handle.clone()),
@@ -193,12 +242,12 @@ fn add_animal(
 fn add_food(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    common_materials: Res<CommonMaterials>,
 ) {
     let mut rng = rand::rng();
     let mut bundles = Vec::with_capacity(200);
     let mesh_handle = meshes.add(Mesh::from(Circle::new(5.0)));
-    let material_handle = materials.add(ColorMaterial::from(Color::hsl(21., 1., 0.356)));
+    let material_handle = common_materials.food.clone();
     for i in 0..200 {
         let x = rng.random_range(-600.0..=600.0);
         let y = rng.random_range(-600.0..=600.0);
@@ -219,24 +268,55 @@ fn add_food(
     commands.spawn_batch(bundles);
 }
 
-fn display_events(
+fn handle_food_collisions(
     mut commands: Commands,
     mut collision_events: EventReader<CollisionEvent>,
-    mut contact_force_events: EventReader<ContactForceEvent>,
-    food_query: Query<(), With<Food>>
+    food_query: Query<(), With<Food>>,
 ) {
     for collision_event in collision_events.read() {
-        if let CollisionEvent::Started(entity1, entity2, _flags) = collision_event {
-            for entity in [entity1, entity2] {
+        if let CollisionEvent::Started(e1, e2, _flags) = collision_event {
+            for entity in [e1, e2] {
                 if food_query.get(*entity).is_ok() {
                     commands.entity(*entity).despawn();
                 }
             }
         }
     }
-    for contact_force_event in contact_force_events.read() {
-        println!("Received contact force event: {:?}", contact_force_event);
-    }
+}
+fn handle_building_collisions(
+    mut collision_events: EventReader<CollisionEvent>,
+    building_query: Query<(), With<Building>>,
+    common_materials: Res<CommonMaterials>,
+    mut state: ResMut<TempState>,
+    mut material_query: Query<&mut MeshMaterial2d<ColorMaterial>>
+) {
+    for collision_event in collision_events.read() {
+        if let CollisionEvent::Started(e1, e2, _flags) = collision_event {
+            if building_query.get(*e1).is_ok() && building_query.get(*e2).is_ok() {
+                material_query.get_mut(state.cur_building.unwrap()).unwrap().0 = common_materials.red_half.clone();
+                for entity in [e1, e2] {
+                    if state.cur_building.is_none() || *entity == state.cur_building.unwrap() {continue;}
+                    state.overlaps.insert(*entity);
+                    break;
+                }  
+            }
+        }   
+        else if let CollisionEvent::Stopped(e1, e2, _flags) = collision_event {
+            if building_query.get(*e1).is_ok() && building_query.get(*e2).is_ok() {
+                for entity in [e1, e2] {
+                    if let Some(building) = state.cur_building{
+                        if *entity != building {
+                            state.overlaps.remove(entity);
+                            break;
+                        }
+                    } 
+                }  
+                if state.overlaps.is_empty() {
+                    material_query.get_mut(state.cur_building.unwrap()).unwrap().0 = common_materials.green_half.clone();
+                }
+            }
+        }   
+    }   
 }
 
 fn camera_controls(
@@ -283,6 +363,31 @@ fn visual_setup(mut commands: Commands) {
     ));
 }
 
+fn draw_grid_enum(grid: Res<WorldGrid>, mut commands: Commands){
+    let tile_size = grid.scale() as f32;
+    let tiles_wide = grid.width() as f32;
+    let tiles_high = grid.height() as f32;
+    let total_width = tiles_wide * tile_size;
+    let total_height = tiles_high * tile_size;
+    let origin = Vec2::new(-total_width / 2.0, -total_height / 2.0);
+
+    for x in 0..=grid.width() {
+        for y in 0..=grid.height() {
+            let world_x = origin.x + (x as f32 * tile_size) + (tile_size / 2.0);
+            let world_y = origin.y + (y as f32 * tile_size) + (tile_size / 2.0);
+            
+            commands.spawn((
+                Text2d::new(format!("{x}|{y}")),
+                TextFont {
+                    font_size: 7.5,
+                    ..default()
+                },
+                Transform::from_xyz(world_x, world_y, 1.0)
+            ));
+        }
+    }
+}
+
 fn draw_world_grid(mut gizmos: Gizmos, grid: Res<WorldGrid>) {
     let tiles_wide = grid.width() as f32;
     let tiles_high = grid.height() as f32;
@@ -313,5 +418,115 @@ fn draw_world_grid(mut gizmos: Gizmos, grid: Res<WorldGrid>) {
             Vec2::new(origin.x + total_width, y_pos),
             color,
         );
+    }
+}
+
+fn track_mouse_world_position(
+    windows: Query<&Window>,
+    camera_q: Query<(&Camera, &GlobalTransform)>,
+    grid: Res<WorldGrid>,
+    mut ev_writer: EventWriter<CursorWorldEvent>,
+) {
+    let (camera, camera_transform) = camera_q.single().unwrap();
+    let window = windows.single().unwrap();
+
+    if let Some(screen_pos) = window.cursor_position() {
+        if let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, screen_pos) {
+            let grid_pos = grid.world_to_grid(world_pos);
+            ev_writer.write(CursorWorldEvent { screen: screen_pos, world: world_pos, grid: grid_pos });
+        }
+    }
+}
+
+fn cursor_event_to_state(
+    mut events: EventReader<CursorWorldEvent>,
+    mut state: ResMut<TempState>,
+) {
+    // Use the most recent event this frame, if any
+    if let Some(last) = events.read().last().copied() {
+        state.cur_cel = last.grid;
+    }
+}
+
+fn building_prototype(
+    mut state: ResMut<TempState>,
+    keys: Res<ButtonInput<KeyCode>>,
+    m_buttons: Res<ButtonInput<MouseButton>>,
+    mut commands: Commands,
+    mut grid: ResMut<WorldGrid>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    common_materials: Res<CommonMaterials>,
+    mut query: Query<&mut Transform>,
+    mut material_query: Query<&mut MeshMaterial2d<ColorMaterial>>
+){
+    if keys.just_pressed(KeyCode::KeyB) {
+        state.building_mode = !state.building_mode;
+        println!("Building mode: {}", state.building_mode);
+    }
+
+    if state.building_mode == true {
+        let origin = state.cur_cel;
+        let building_size = Vec2::new(3.0, 3.0);
+        let pos = grid.grid_to_world(origin, building_size);
+        if let None = state.cur_building {
+            let mesh_handle = meshes.add(Mesh::from(
+                Rectangle::new(building_size.x * grid.scale() as f32,
+                 building_size.y * grid.scale() as f32)));
+            let material_handle = common_materials.green_half.clone();
+            let visual = VisualBundle{
+                mesh: Mesh2d(mesh_handle.clone()),
+                material: MeshMaterial2d(material_handle.clone()),
+                transform: Transform::from_xyz(pos.x, pos.y, 0.0)
+            };
+            let collision = CollisionBundle::rect_sensor(
+            (building_size - 0.01 )* grid.scale() as f32, RigidBody::Fixed, true);
+            let ent = commands.spawn((visual, collision, Building));
+            state.cur_building = Some(ent.id());
+        }
+        else if let Some(building) = state.cur_building {
+            let mut transform = query.get_mut(building).unwrap();
+            transform.translation = vec3(pos.x, pos.y, 0.0);
+
+            if m_buttons.just_pressed(MouseButton::Left) && state.overlaps.is_empty(){
+                //also triggers when trying to drag camera. 
+                let mut material = material_query.get_mut(building).unwrap();
+                material.0 = common_materials.building.clone();
+                state.cur_building = None;
+                grid.modify_rectangle(origin, building_size);
+            }
+        }
+    }
+    else {
+        if let Some(building) = state.cur_building {
+            commands.entity(building).despawn();
+            state.cur_building = None;
+        }
+    }
+}
+
+fn select_building(
+    rapier_context: ReadRapierContext,
+    m_buttons: Res<ButtonInput<MouseButton>>,
+    mut events: EventReader<CursorWorldEvent>,
+) {
+    if m_buttons.just_pressed(MouseButton::Left) {
+        let ray_pos ;
+        if let Some(last) = events.read().last().copied() {
+            ray_pos = last.world;
+            println!("{:?}", last.world)
+        }
+        else {
+            return;
+        }
+        let rapier_context = rapier_context.single().unwrap();
+        let ray_dir = Vec2::new(0.,0.);
+        let max_toi = 99999.;
+        let solid = true;
+        let filter = QueryFilter::default();
+
+        if let Some((entity, toi)) = rapier_context.cast_ray(ray_pos, ray_dir, max_toi, solid, filter) {
+            let hit_point = ray_pos + ray_dir * toi;
+            println!("Entity {:?} hit at point {}", entity, hit_point);
+        }
     }
 }

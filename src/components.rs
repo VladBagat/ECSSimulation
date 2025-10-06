@@ -38,6 +38,9 @@ pub struct Destination(pub Vec2);
 pub struct Food(pub f32);
 
 #[derive(Component)]
+pub struct Building;
+
+#[derive(Component)]
 pub struct TrackedByKDTree;
 
 #[derive(Component)]
@@ -83,6 +86,15 @@ impl CollisionBundle {
     pub fn circle_sensor(radius: f32, rb_type: RigidBody, events: bool) -> Self {
         Self {
             collider: Collider::ball(radius),
+            sensor: Sensor,
+            collision_types: ActiveCollisionTypes::all(),
+            active_events: if events {ActiveEvents::COLLISION_EVENTS } else { ActiveEvents::empty() },
+            rigidbody: rb_type
+        }
+    }
+    pub fn rect_sensor(size: Vec2, rb_type: RigidBody, events: bool) -> Self {
+        Self {
+            collider: Collider::cuboid(size.x/2., size.y/2.),
             sensor: Sensor,
             collision_types: ActiveCollisionTypes::all(),
             active_events: if events {ActiveEvents::COLLISION_EVENTS } else { ActiveEvents::empty() },
