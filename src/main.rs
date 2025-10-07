@@ -1,6 +1,7 @@
 mod components;
 mod materials;
 mod world_grid;
+mod states;
 
 use core::f32;
 use std::time::Duration;
@@ -14,10 +15,16 @@ use rand::Rng;
 use bevy_rapier2d::prelude::*;
 use bevy_spatial::{kdtree::KDTree2, AutomaticUpdate, SpatialAccess, SpatialStructure, TransformMode};
 
-pub struct Movement;
+use crate::states::GameControlState;
 
+pub struct Movement;
 pub struct Visual;
 pub struct CameraControls;
+pub struct GameBuildingPlugins;
+pub struct GameDefaultPlugins;
+/// Marker for UI entities that belong to the Building state so they can be cleaned up on exit
+#[derive(Component)]
+struct BuildingUi;
 
 // Global cursor event so multiple systems can subscribe without relying on shared state
 #[derive(Event, Debug, Clone, Copy)]
@@ -34,8 +41,7 @@ struct CursorWorldEvent {
 struct WorldTimer(Timer);
 
 #[derive(Resource)]
-struct TempState{
-    building_mode: bool,
+struct BuildingControlState{
     cur_cel: Vec2,
     cur_building: Option<Entity>,
     overlaps: HashSet<Entity>,
@@ -46,11 +52,12 @@ struct LongBehaviourTimer(Timer);
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
-        .add_plugins(UiLunexPlugins)
+        .add_plugins((DefaultPlugins, UiLunexPlugins))
         .add_plugins(Visual)
         .add_plugins(Movement)
         .add_plugins(CameraControls)
+        .add_plugins((GameDefaultPlugins, GameBuildingPlugins))
+        .insert_state(GameControlState::Default)
         .run();
 }
 
@@ -65,15 +72,9 @@ impl Plugin for Movement {
         .insert_resource(WorldTimer(Timer::from_seconds(1.0, TimerMode::Repeating)))
         .insert_resource(LongBehaviourTimer(Timer::from_seconds(5.0, TimerMode::Repeating)))
         .insert_resource(WorldGrid::new(160, 160, 25))
-        .insert_resource(TempState {
-            building_mode: false,
-            cur_cel: Vec2::default(),
-            cur_building: None,
-            overlaps: HashSet::default()
-        })
         .add_systems(Startup, ((setup_common_materials, add_animal, add_food, draw_grid_enum)).chain())
-        .add_systems(Update, (update_hunger, update_thirst, update_sleep, select_building))
-        .add_systems(Update, (handle_food_collisions, handle_building_collisions, test_tree, draw_world_grid))
+        .add_systems(Update, (update_hunger, update_thirst, update_sleep))
+        .add_systems(Update, (handle_food_collisions, test_tree, draw_world_grid))
         .add_systems(FixedUpdate, (update_movement).chain());
     }
 }
@@ -90,7 +91,6 @@ impl Plugin for CameraControls {
                     track_mouse_world_position, // emit cursor event
                     cursor_event_to_state,       // keep TempState.cur_cel in sync for legacy users
                     camera_controls,
-                    building_prototype,
                 ),
             );
     }
@@ -99,6 +99,128 @@ impl Plugin for CameraControls {
 impl Plugin for Visual {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup,  visual_setup);
+    }
+}
+impl Plugin for GameDefaultPlugins {
+    fn build(&self, app: &mut App) {
+        app.
+            add_systems(Update, game_state_control_default);
+    }
+}
+
+impl Plugin for GameBuildingPlugins {
+    fn build(&self, app: &mut App) {
+        app
+        .insert_resource(BuildingControlState {
+            cur_cel: Vec2::default(),
+            cur_building: None,
+            overlaps: HashSet::default()
+        })
+        .add_systems(Update,
+             (select_building, handle_building_collisions, game_state_control_building, building_prototype)
+            .run_if(in_state(GameControlState::Building)))
+        .add_systems(OnExit(GameControlState::Building), state_cleanup_building)
+        .add_systems(OnEnter(GameControlState::Building), (state_cleanup_building, state_ui_startup_building));
+    }
+}
+
+fn game_state_control_default(
+    mut next_state: ResMut<NextState<GameControlState>>,
+    keys: Res<ButtonInput<KeyCode>>,
+) {
+    if keys.just_pressed(KeyCode::KeyB) {
+        next_state.set(GameControlState::Building)
+    }
+}
+
+fn game_state_control_building(
+    mut next_state: ResMut<NextState<GameControlState>>,
+    keys: Res<ButtonInput<KeyCode>>,
+) {
+    if keys.just_pressed(KeyCode::KeyB) {
+        next_state.set(GameControlState::Default)
+    }
+}
+
+fn state_cleanup_building(
+    mut state: ResMut<BuildingControlState>,
+    mut commands: Commands,
+    ui_query: Query<Entity, With<BuildingUi>>,
+){
+    if let Some(building) = state.cur_building {
+        commands.entity(building).despawn();
+        state.cur_building = None;
+    }
+
+    // Despawn any UI created for the Building state
+    for e in &ui_query {
+        commands.entity(e).despawn();
+    }
+}
+
+fn state_ui_startup_building(
+    camera_q: Query<Entity, With<MainCamera>>,
+    mut commands: Commands,
+) {
+    if let Ok(camera) = camera_q.single() {
+        // Attach UI under the camera so it renders with UiSourceCamera::<0>
+        commands.entity(camera).with_children(|cam| {
+            cam.spawn((
+                Name::new("UI Root"),
+                UiLayoutRoot::new_2d(),
+                UiFetchFromCamera::<0>,
+                BuildingUi,
+            ))
+            .with_children(|ui| {
+                ui.spawn((
+                    Name::new("Background"),
+                    UiLayout::window()
+                        .anchor(Anchor::BottomCenter)
+                        .pos(Rl((50.0, 100.0)))
+                        .size((600.0, 75.0))
+                        .pack(),
+                    Sprite::from_color(
+                        Color::srgba(0.5, 0.5, 0.5, 1.0),
+                        Vec2::new(50.0, 50.0),
+                    ),
+                ))
+                .with_children(|ui| {
+                    ui.spawn((
+                        Name::new("Stuff"),
+                        UiLayout::window()
+                            .anchor(Anchor::Center)
+                            .pos(Rl((20.0, 50.0)))
+                            .size((50.0, 50.0))
+                            .pack(),
+                        Sprite::from_color(
+                            Color::srgba(1.0, 0.0, 0.0, 1.0),
+                            Vec2::new(50.0, 50.0),
+                        ),
+                        OnHoverSetCursor::new(SystemCursorIcon::Pointer),
+                    ))
+                    .observe(|_: Trigger<Pointer<Click>>, mut exit: EventWriter<AppExit>| {
+                        exit.write(AppExit::Success);
+                    });
+
+                    ui.spawn((
+                        Name::new("Stuff2"),
+                        UiLayout::window()
+                            .anchor(Anchor::Center)
+                            .pos(Rl((30.0, 50.0)))
+                            .size((50.0, 50.0))
+                            .pack(),
+                        Sprite::from_color(
+                            Color::srgba(0.0, 1.0, 0.0, 1.0),
+                            Vec2::new(50.0, 50.0),
+                        ),
+                        OnHoverSetCursor::new(SystemCursorIcon::Pointer),
+                    ))
+                    .observe(|_: Trigger<Pointer<Click>>, mut exit: EventWriter<AppExit>| {
+                        exit.write(AppExit::Success);
+                    });
+                });
+            });
+        });
     }
 }
 
@@ -110,47 +232,8 @@ fn visual_setup(mut commands: Commands) {
         Projection::from(OrthographicProjection {
             ..OrthographicProjection::default_2d()
         }),
-    )).with_children(|cam| {
-        cam.spawn((
-    UiLayoutRoot::new_2d(),
-    UiFetchFromCamera::<0>,
-)).with_children(|ui| {
-    ui.spawn((  
-        Name::new("Background"),
-        UiLayout::window()
-            .anchor(Anchor::BottomCenter)
-            .pos(Rl((50.0, 100.0)))
-            .size((600.0, 75.0))
-            .pack(),
-        Sprite::from_color(Color::srgba(0.5, 0.5 ,0.5, 1.), Vec2::new(50., 50.)),
-    )).with_children(|ui| {
-        ui.spawn((
-        Name::new("Stuff"),
-        UiLayout::window()
-            .anchor(Anchor::Center)
-            .pos(Rl((20.0, 50.0))) 
-            .size((50.0, 50.0))
-            .pack(),
-        Sprite::from_color(Color::srgba(1., 0. ,0., 1.), Vec2::new(50., 50.)),
-        OnHoverSetCursor::new(SystemCursorIcon::Pointer),
-    )).observe(|_: Trigger<Pointer<Click>>, mut exit: EventWriter<AppExit>| {
-        exit.write(AppExit::Success);
-    }); 
-    ui.spawn((
-        Name::new("Stuff2"),
-        UiLayout::window()
-            .anchor(Anchor::Center)
-            .pos(Rl((30.0, 50.0))) 
-            .size((50.0, 50.0))
-            .pack(),
-        Sprite::from_color(Color::srgba(0., 1. ,0., 1.), Vec2::new(50., 50.)),
-        OnHoverSetCursor::new(SystemCursorIcon::Pointer),
-    )).observe(|_: Trigger<Pointer<Click>>, mut exit: EventWriter<AppExit>| {
-        exit.write(AppExit::Success);
-    });  
-    });
-    });
-    });
+        MainCamera,
+    ));
 }
 
 fn test_tree(
@@ -348,7 +431,7 @@ fn handle_building_collisions(
     mut collision_events: EventReader<CollisionEvent>,
     building_query: Query<(), With<Building>>,
     common_materials: Res<CommonMaterials>,
-    mut state: ResMut<TempState>,
+    mut state: ResMut<BuildingControlState>,
     mut material_query: Query<&mut MeshMaterial2d<ColorMaterial>>
 ) {
     for collision_event in collision_events.read() {
@@ -492,7 +575,7 @@ fn track_mouse_world_position(
 
 fn cursor_event_to_state(
     mut events: EventReader<CursorWorldEvent>,
-    mut state: ResMut<TempState>,
+    mut state: ResMut<BuildingControlState>,
 ) {
     // Use the most recent event this frame, if any
     if let Some(last) = events.read().last().copied() {
@@ -501,8 +584,7 @@ fn cursor_event_to_state(
 }
 
 fn building_prototype(
-    mut state: ResMut<TempState>,
-    keys: Res<ButtonInput<KeyCode>>,
+    mut state: ResMut<BuildingControlState>,
     m_buttons: Res<ButtonInput<MouseButton>>,
     mut commands: Commands,
     mut grid: ResMut<WorldGrid>,
@@ -511,50 +593,38 @@ fn building_prototype(
     mut query: Query<&mut Transform>,
     mut material_query: Query<&mut MeshMaterial2d<ColorMaterial>>
 ){
-    if keys.just_pressed(KeyCode::KeyB) {
-        state.building_mode = !state.building_mode;
-        println!("Building mode: {}", state.building_mode);
+    let origin = state.cur_cel;
+    let building_size = Vec2::new(3.0, 3.0);
+    let pos = grid.grid_to_world(origin, building_size);
+    if let None = state.cur_building {
+        let mesh_handle = meshes.add(Mesh::from(
+            Rectangle::new(building_size.x * grid.scale() as f32,
+                building_size.y * grid.scale() as f32)));
+        let material_handle = common_materials.green_half.clone();
+        let visual = VisualBundle{
+            mesh: Mesh2d(mesh_handle.clone()),
+            material: MeshMaterial2d(material_handle.clone()),
+            transform: Transform::from_xyz(pos.x, pos.y, 0.0)
+        };
+        let collision = CollisionBundle::rect_sensor(
+        (building_size - 0.01 )* grid.scale() as f32, RigidBody::Fixed, true);
+        let ent = commands.spawn((visual, collision, Building));
+        state.cur_building = Some(ent.id());
     }
+    else if let Some(building) = state.cur_building {
+        let mut transform = query.get_mut(building).unwrap();
+        transform.translation = vec3(pos.x, pos.y, 0.0);
 
-    if state.building_mode == true {
-        let origin = state.cur_cel;
-        let building_size = Vec2::new(3.0, 3.0);
-        let pos = grid.grid_to_world(origin, building_size);
-        if let None = state.cur_building {
-            let mesh_handle = meshes.add(Mesh::from(
-                Rectangle::new(building_size.x * grid.scale() as f32,
-                 building_size.y * grid.scale() as f32)));
-            let material_handle = common_materials.green_half.clone();
-            let visual = VisualBundle{
-                mesh: Mesh2d(mesh_handle.clone()),
-                material: MeshMaterial2d(material_handle.clone()),
-                transform: Transform::from_xyz(pos.x, pos.y, 0.0)
-            };
-            let collision = CollisionBundle::rect_sensor(
-            (building_size - 0.01 )* grid.scale() as f32, RigidBody::Fixed, true);
-            let ent = commands.spawn((visual, collision, Building));
-            state.cur_building = Some(ent.id());
-        }
-        else if let Some(building) = state.cur_building {
-            let mut transform = query.get_mut(building).unwrap();
-            transform.translation = vec3(pos.x, pos.y, 0.0);
-
-            if m_buttons.just_pressed(MouseButton::Left) && state.overlaps.is_empty(){
-                //also triggers when trying to drag camera. 
-                let mut material = material_query.get_mut(building).unwrap();
-                material.0 = common_materials.building.clone();
-                state.cur_building = None;
-                grid.modify_rectangle(origin, building_size);
-            }
-        }
-    }
-    else {
-        if let Some(building) = state.cur_building {
-            commands.entity(building).despawn();
+        if m_buttons.just_pressed(MouseButton::Left) && state.overlaps.is_empty(){
+            //also triggers when trying to drag camera. 
+            let mut material = material_query.get_mut(building).unwrap();
+            material.0 = common_materials.building.clone();
             state.cur_building = None;
+            grid.modify_rectangle(origin, building_size);
         }
     }
 }
+
 
 fn select_building(
     rapier_context: ReadRapierContext,

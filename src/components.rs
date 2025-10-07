@@ -5,6 +5,9 @@ use bevy_rapier2d::prelude::*;
 pub struct Health(pub f32);
 
 #[derive(Component)]
+pub struct MainCamera;
+
+#[derive(Component)]
 pub struct Hunger{
     pub value: f32,
     pub decay: fn(&f32) -> f32,
