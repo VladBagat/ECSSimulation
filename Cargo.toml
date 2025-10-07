@@ -8,6 +8,7 @@ bevy = { version = "0.16.1", features = ["dynamic_linking"] }
 bevy_rapier2d = "0.31.0"
 bevy_spatial = "0.11.0"
 rand = "0.9"
+bevy_lunex = { version = "*" }
 
 [profile.dev]
 opt-level = 1

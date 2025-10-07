@@ -5,7 +5,8 @@ mod world_grid;
 use core::f32;
 use std::time::Duration;
 
-use bevy::{input::mouse::{MouseMotion, MouseWheel}, math::ops::powf, platform::collections::HashSet, prelude::*};
+use bevy::{asset, input::mouse::{MouseMotion, MouseWheel}, math::ops::powf, platform::collections::HashSet, prelude::{Name, *}, render::view::RenderLayers};
+use bevy_lunex::{*, prelude::*};
 use components::{*, Velocity};
 use materials::{CommonMaterials, setup_common_materials};
 use world_grid::WorldGrid;
@@ -15,6 +16,7 @@ use bevy_spatial::{kdtree::KDTree2, AutomaticUpdate, SpatialAccess, SpatialStruc
 
 pub struct Movement;
 
+pub struct Visual;
 pub struct CameraControls;
 
 // Global cursor event so multiple systems can subscribe without relying on shared state
@@ -45,6 +47,8 @@ struct LongBehaviourTimer(Timer);
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(UiLunexPlugins)
+        .add_plugins(Visual)
         .add_plugins(Movement)
         .add_plugins(CameraControls)
         .run();
@@ -53,7 +57,7 @@ fn main() {
 impl Plugin for Movement {
     fn build(&self, app: &mut App) {
         app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
-        .add_plugins(RapierDebugRenderPlugin::default())
+        //.add_plugins(RapierDebugRenderPlugin::default()) //debug
         .add_plugins(AutomaticUpdate::<FoodTracking>::new()
             .with_frequency(Duration::from_secs_f32(1.))
             .with_transform(TransformMode::GlobalTransform)
@@ -67,7 +71,7 @@ impl Plugin for Movement {
             cur_building: None,
             overlaps: HashSet::default()
         })
-        .add_systems(Startup, ((setup_common_materials, visual_setup, add_animal, add_food, draw_grid_enum)).chain())
+        .add_systems(Startup, ((setup_common_materials, add_animal, add_food, draw_grid_enum)).chain())
         .add_systems(Update, (update_hunger, update_thirst, update_sleep, select_building))
         .add_systems(Update, (handle_food_collisions, handle_building_collisions, test_tree, draw_world_grid))
         .add_systems(FixedUpdate, (update_movement).chain());
@@ -92,6 +96,63 @@ impl Plugin for CameraControls {
     }
 }
 
+impl Plugin for Visual {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup,  visual_setup);
+    }
+}
+
+fn visual_setup(mut commands: Commands) {
+    commands.spawn((
+        Camera2d, UiSourceCamera::<0>,
+        Transform::from_translation(Vec3::Z * 1000.0),
+        RenderLayers::from_layers(&[0, 1]),
+        Projection::from(OrthographicProjection {
+            ..OrthographicProjection::default_2d()
+        }),
+    )).with_children(|cam| {
+        cam.spawn((
+    UiLayoutRoot::new_2d(),
+    UiFetchFromCamera::<0>,
+)).with_children(|ui| {
+    ui.spawn((  
+        Name::new("Background"),
+        UiLayout::window()
+            .anchor(Anchor::BottomCenter)
+            .pos(Rl((50.0, 100.0)))
+            .size((600.0, 75.0))
+            .pack(),
+        Sprite::from_color(Color::srgba(0.5, 0.5 ,0.5, 1.), Vec2::new(50., 50.)),
+    )).with_children(|ui| {
+        ui.spawn((
+        Name::new("Stuff"),
+        UiLayout::window()
+            .anchor(Anchor::Center)
+            .pos(Rl((20.0, 50.0))) 
+            .size((50.0, 50.0))
+            .pack(),
+        Sprite::from_color(Color::srgba(1., 0. ,0., 1.), Vec2::new(50., 50.)),
+        OnHoverSetCursor::new(SystemCursorIcon::Pointer),
+    )).observe(|_: Trigger<Pointer<Click>>, mut exit: EventWriter<AppExit>| {
+        exit.write(AppExit::Success);
+    }); 
+    ui.spawn((
+        Name::new("Stuff2"),
+        UiLayout::window()
+            .anchor(Anchor::Center)
+            .pos(Rl((30.0, 50.0))) 
+            .size((50.0, 50.0))
+            .pack(),
+        Sprite::from_color(Color::srgba(0., 1. ,0., 1.), Vec2::new(50., 50.)),
+        OnHoverSetCursor::new(SystemCursorIcon::Pointer),
+    )).observe(|_: Trigger<Pointer<Click>>, mut exit: EventWriter<AppExit>| {
+        exit.write(AppExit::Success);
+    });  
+    });
+    });
+    });
+}
+
 fn test_tree(
     tree: Res<KDTree2<FoodTracking>>,
     query: Query<(Entity, &Transform), (With<Speed>, With<Destination>)>,
@@ -102,7 +163,7 @@ fn test_tree(
     let color = Color::srgba(0.75, 0.75, 0., 0.75); // Move all gizmos to a separate system?
     for (hero_entity, hero_pos) in query {
         let origin = hero_pos.translation.truncate();
-        gizmos.circle_2d(origin, radius, color);
+        //gizmos.circle_2d(origin, radius, color);
         let objects_prox = tree.within_distance(origin, radius);
         if objects_prox.len() != 0 {
             let mut items: Vec<(f32, Vec2, Option<Entity>)> = objects_prox
@@ -121,9 +182,9 @@ fn test_tree(
                 }
             }
             //Debug
-            for (_distance, position, _entity) in items {
+            /*for (_distance, position, _entity) in items {
                 gizmos.line_2d(position, origin, color);
-            }
+            }*/
         }
         else {
             //println!("Run out of food!")
@@ -352,15 +413,6 @@ fn camera_controls(
     } else {
         for _ in scroll_events.read() {}
     }
-}
-
-fn visual_setup(mut commands: Commands) {
-    commands.spawn((
-        Camera2d::default(),
-        Projection::from(OrthographicProjection {
-            ..OrthographicProjection::default_2d()
-        }),
-    ));
 }
 
 fn draw_grid_enum(grid: Res<WorldGrid>, mut commands: Commands){
