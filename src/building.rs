@@ -59,7 +59,6 @@ fn building_prototype(
             }
         }
     }
-    
 }
 
 fn create_building_template (
@@ -141,6 +140,7 @@ fn state_cleanup_building(
     }
 }
 
+// TODO: UI doesn't scale with camera 
 fn state_ui_startup_building(
     camera_q: Query<Entity, With<MainCamera>>,
     mut commands: Commands,
