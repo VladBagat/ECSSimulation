@@ -105,3 +105,10 @@ impl CollisionBundle {
         }
     }
 }
+
+#[derive(Bundle)]
+pub struct BuildingBundle {
+    pub visual: VisualBundle,
+    pub collision: CollisionBundle,
+    pub building: Building,
+}

@@ -2,11 +2,12 @@ mod components;
 mod materials;
 mod world_grid;
 mod states;
+mod building;
 
-use core::f32;
 use std::time::Duration;
+use crate::building::BuildingControlState;
 
-use bevy::{asset, input::mouse::{MouseMotion, MouseWheel}, math::ops::powf, platform::collections::HashSet, prelude::{Name, *}, render::view::RenderLayers};
+use bevy::{input::mouse::{MouseMotion, MouseWheel}, math::ops::powf, platform::collections::HashSet, prelude::{Name, *}, render::view::RenderLayers};
 use bevy_lunex::{*, prelude::*};
 use components::{*, Velocity};
 use materials::{CommonMaterials, setup_common_materials};
@@ -22,30 +23,22 @@ pub struct Visual;
 pub struct CameraControls;
 pub struct GameBuildingPlugins;
 pub struct GameDefaultPlugins;
-/// Marker for UI entities that belong to the Building state so they can be cleaned up on exit
+
 #[derive(Component)]
 struct BuildingUi;
 
-// Global cursor event so multiple systems can subscribe without relying on shared state
 #[derive(Event, Debug, Clone, Copy)]
 struct CursorWorldEvent {
-    /// Cursor position in window/screen coordinates (pixels)
     screen: Vec2,
-    /// Cursor position in world coordinates
     world: Vec2,
-    /// Cursor position snapped to grid cells (in grid coordinates)
     grid: Vec2,
 }
 
-#[derive(Resource)]
-struct WorldTimer(Timer);
+#[derive(Resource, Default)]
+struct UiBlockHoverCount(pub usize);
 
 #[derive(Resource)]
-struct BuildingControlState{
-    cur_cel: Vec2,
-    cur_building: Option<Entity>,
-    overlaps: HashSet<Entity>,
-}
+struct WorldTimer(Timer);
 
 #[derive(Resource)]
 struct LongBehaviourTimer(Timer);
@@ -82,6 +75,7 @@ impl Plugin for Movement {
 impl Plugin for CameraControls {
     fn build(&self, app: &mut App) {
         app
+            .insert_resource(UiBlockHoverCount::default())
             // Register a global event for cursor world/grid position
             .add_event::<CursorWorldEvent>()
             // Systems
@@ -103,24 +97,8 @@ impl Plugin for Visual {
 }
 impl Plugin for GameDefaultPlugins {
     fn build(&self, app: &mut App) {
-        app.
-            add_systems(Update, game_state_control_default);
-    }
-}
-
-impl Plugin for GameBuildingPlugins {
-    fn build(&self, app: &mut App) {
         app
-        .insert_resource(BuildingControlState {
-            cur_cel: Vec2::default(),
-            cur_building: None,
-            overlaps: HashSet::default()
-        })
-        .add_systems(Update,
-             (select_building, handle_building_collisions, game_state_control_building, building_prototype)
-            .run_if(in_state(GameControlState::Building)))
-        .add_systems(OnExit(GameControlState::Building), state_cleanup_building)
-        .add_systems(OnEnter(GameControlState::Building), (state_cleanup_building, state_ui_startup_building));
+            .add_systems(Update, game_state_control_default.run_if(in_state(GameControlState::Default)));
     }
 }
 
@@ -130,97 +108,6 @@ fn game_state_control_default(
 ) {
     if keys.just_pressed(KeyCode::KeyB) {
         next_state.set(GameControlState::Building)
-    }
-}
-
-fn game_state_control_building(
-    mut next_state: ResMut<NextState<GameControlState>>,
-    keys: Res<ButtonInput<KeyCode>>,
-) {
-    if keys.just_pressed(KeyCode::KeyB) {
-        next_state.set(GameControlState::Default)
-    }
-}
-
-fn state_cleanup_building(
-    mut state: ResMut<BuildingControlState>,
-    mut commands: Commands,
-    ui_query: Query<Entity, With<BuildingUi>>,
-){
-    if let Some(building) = state.cur_building {
-        commands.entity(building).despawn();
-        state.cur_building = None;
-    }
-
-    // Despawn any UI created for the Building state
-    for e in &ui_query {
-        commands.entity(e).despawn();
-    }
-}
-
-fn state_ui_startup_building(
-    camera_q: Query<Entity, With<MainCamera>>,
-    mut commands: Commands,
-) {
-    if let Ok(camera) = camera_q.single() {
-        // Attach UI under the camera so it renders with UiSourceCamera::<0>
-        commands.entity(camera).with_children(|cam| {
-            cam.spawn((
-                Name::new("UI Root"),
-                UiLayoutRoot::new_2d(),
-                UiFetchFromCamera::<0>,
-                BuildingUi,
-            ))
-            .with_children(|ui| {
-                ui.spawn((
-                    Name::new("Background"),
-                    UiLayout::window()
-                        .anchor(Anchor::BottomCenter)
-                        .pos(Rl((50.0, 100.0)))
-                        .size((600.0, 75.0))
-                        .pack(),
-                    Sprite::from_color(
-                        Color::srgba(0.5, 0.5, 0.5, 1.0),
-                        Vec2::new(50.0, 50.0),
-                    ),
-                ))
-                .with_children(|ui| {
-                    ui.spawn((
-                        Name::new("Stuff"),
-                        UiLayout::window()
-                            .anchor(Anchor::Center)
-                            .pos(Rl((20.0, 50.0)))
-                            .size((50.0, 50.0))
-                            .pack(),
-                        Sprite::from_color(
-                            Color::srgba(1.0, 0.0, 0.0, 1.0),
-                            Vec2::new(50.0, 50.0),
-                        ),
-                        OnHoverSetCursor::new(SystemCursorIcon::Pointer),
-                    ))
-                    .observe(|_: Trigger<Pointer<Click>>, mut exit: EventWriter<AppExit>| {
-                        exit.write(AppExit::Success);
-                    });
-
-                    ui.spawn((
-                        Name::new("Stuff2"),
-                        UiLayout::window()
-                            .anchor(Anchor::Center)
-                            .pos(Rl((30.0, 50.0)))
-                            .size((50.0, 50.0))
-                            .pack(),
-                        Sprite::from_color(
-                            Color::srgba(0.0, 1.0, 0.0, 1.0),
-                            Vec2::new(50.0, 50.0),
-                        ),
-                        OnHoverSetCursor::new(SystemCursorIcon::Pointer),
-                    ))
-                    .observe(|_: Trigger<Pointer<Click>>, mut exit: EventWriter<AppExit>| {
-                        exit.write(AppExit::Success);
-                    });
-                });
-            });
-        });
     }
 }
 
@@ -427,42 +314,6 @@ fn handle_food_collisions(
         }
     }
 }
-fn handle_building_collisions(
-    mut collision_events: EventReader<CollisionEvent>,
-    building_query: Query<(), With<Building>>,
-    common_materials: Res<CommonMaterials>,
-    mut state: ResMut<BuildingControlState>,
-    mut material_query: Query<&mut MeshMaterial2d<ColorMaterial>>
-) {
-    for collision_event in collision_events.read() {
-        if let CollisionEvent::Started(e1, e2, _flags) = collision_event {
-            if building_query.get(*e1).is_ok() && building_query.get(*e2).is_ok() {
-                material_query.get_mut(state.cur_building.unwrap()).unwrap().0 = common_materials.red_half.clone();
-                for entity in [e1, e2] {
-                    if state.cur_building.is_none() || *entity == state.cur_building.unwrap() {continue;}
-                    state.overlaps.insert(*entity);
-                    break;
-                }  
-            }
-        }   
-        else if let CollisionEvent::Stopped(e1, e2, _flags) = collision_event {
-            if building_query.get(*e1).is_ok() && building_query.get(*e2).is_ok() {
-                for entity in [e1, e2] {
-                    if let Some(building) = state.cur_building{
-                        if *entity != building {
-                            state.overlaps.remove(entity);
-                            break;
-                        }
-                    } 
-                }  
-                if state.overlaps.is_empty() {
-                    material_query.get_mut(state.cur_building.unwrap()).unwrap().0 = common_materials.green_half.clone();
-                }
-            }
-        }   
-    }   
-}
-
 fn camera_controls(
     mut mouse_motion_events: EventReader<MouseMotion>,
     mut scroll_events: EventReader<MouseWheel>,
@@ -583,73 +434,4 @@ fn cursor_event_to_state(
     }
 }
 
-fn building_prototype(
-    mut state: ResMut<BuildingControlState>,
-    m_buttons: Res<ButtonInput<MouseButton>>,
-    mut commands: Commands,
-    mut grid: ResMut<WorldGrid>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    common_materials: Res<CommonMaterials>,
-    mut query: Query<&mut Transform>,
-    mut material_query: Query<&mut MeshMaterial2d<ColorMaterial>>
-){
-    let origin = state.cur_cel;
-    let building_size = Vec2::new(3.0, 3.0);
-    let pos = grid.grid_to_world(origin, building_size);
-    if let None = state.cur_building {
-        let mesh_handle = meshes.add(Mesh::from(
-            Rectangle::new(building_size.x * grid.scale() as f32,
-                building_size.y * grid.scale() as f32)));
-        let material_handle = common_materials.green_half.clone();
-        let visual = VisualBundle{
-            mesh: Mesh2d(mesh_handle.clone()),
-            material: MeshMaterial2d(material_handle.clone()),
-            transform: Transform::from_xyz(pos.x, pos.y, 0.0)
-        };
-        let collision = CollisionBundle::rect_sensor(
-        (building_size - 0.01 )* grid.scale() as f32, RigidBody::Fixed, true);
-        let ent = commands.spawn((visual, collision, Building));
-        state.cur_building = Some(ent.id());
-    }
-    else if let Some(building) = state.cur_building {
-        let mut transform = query.get_mut(building).unwrap();
-        transform.translation = vec3(pos.x, pos.y, 0.0);
 
-        if m_buttons.just_pressed(MouseButton::Left) && state.overlaps.is_empty(){
-            //also triggers when trying to drag camera. 
-            let mut material = material_query.get_mut(building).unwrap();
-            material.0 = common_materials.building.clone();
-            state.cur_building = None;
-            grid.modify_rectangle(origin, building_size);
-        }
-    }
-}
-
-
-fn select_building(
-    rapier_context: ReadRapierContext,
-    m_buttons: Res<ButtonInput<MouseButton>>,
-    mut events: EventReader<CursorWorldEvent>,
-) {
-    if m_buttons.just_pressed(MouseButton::Left) {
-        let ray_pos ;
-        if let Some(last) = events.read().last().copied() {
-            ray_pos = last.world;
-        }
-        else {
-            return;
-        }
-        let rapier_context = rapier_context.single().unwrap();
-        let ray_dir = Vec2::new(0.,0.);
-        let max_toi = 99999.;
-        let solid = true;
-        let filter = QueryFilter::default();
-
-        if let Some((entity, toi)) = rapier_context.cast_ray(ray_pos, ray_dir, max_toi, solid, filter) {
-            let hit_point = ray_pos + ray_dir * toi;
-            //for now let any object get the context menu
-            // TODO: Repurpose this for event emmiter and create separate building context menu event subscriber.
-            
-        }
-    }
-}
