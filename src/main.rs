@@ -3,9 +3,10 @@ mod materials;
 mod world_grid;
 mod states;
 mod building;
+mod production;
 
 use std::time::Duration;
-use crate::building::BuildingControlState;
+use crate::{building::BuildingControlState, production::ProductionSystems};
 
 use bevy::{input::mouse::{MouseMotion, MouseWheel}, math::ops::powf, platform::collections::HashSet, prelude::{Name, *}, render::view::RenderLayers};
 use bevy_lunex::{*, prelude::*};
@@ -16,6 +17,7 @@ use rand::Rng;
 use bevy_rapier2d::prelude::*;
 use bevy_rapier2d::render::RapierDebugRenderPlugin;
 use bevy_spatial::{kdtree::KDTree2, AutomaticUpdate, SpatialAccess, SpatialStructure, TransformMode};
+use bevy::ecs::schedule::common_conditions::on_event; // added
 
 use crate::states::GameControlState;
 
@@ -41,6 +43,10 @@ struct CursorWorldEvent {
     world: Vec2,
     grid: Vec2,
 }
+
+// Add a shared world tick event
+#[derive(Event, Debug, Clone, Copy)]
+struct WorldTick;
 
 #[derive(Resource, Default)]
 struct UiBlockHoverCount(pub usize);
@@ -68,6 +74,7 @@ fn main() {
         .add_plugins(Movement)
         .add_plugins(CameraControls)
         .add_plugins((GameDefaultPlugins, GameBuildingPlugins))
+        .add_plugins(ProductionSystems)
         //.add_plugins(HumanPlugins)
         .insert_state(GameControlState::Default);
 
@@ -84,8 +91,17 @@ fn main() {
 impl Plugin for Movement {
     fn build(&self, app: &mut App) {
         app
-        .add_systems(Startup, ((setup_common_materials)).chain())
-        .add_systems(Update, (update_hunger, update_thirst, update_sleep));
+            .add_event::<WorldTick>()
+            .add_systems(Startup, (setup_common_materials).chain())
+            .add_systems(Update, world_tick_emitter)
+            .add_systems(
+                Update,
+                (
+                    update_hunger.run_if(on_event::<WorldTick>),
+                    update_thirst.run_if(on_event::<WorldTick>),
+                    update_sleep.run_if(on_event::<WorldTick>),
+                ),
+            );
     }
 }
 
@@ -189,25 +205,31 @@ fn food_search(
     } 
 }
 
-fn update_hunger(time: Res<Time>, mut timer: ResMut<WorldTimer>, mut query: Query<&mut Hunger>) {
+fn world_tick_emitter(
+    time: Res<Time>,
+    mut timer: ResMut<WorldTimer>,
+    mut ev: EventWriter<WorldTick>,
+) {
     if timer.0.tick(time.delta()).just_finished() {
-        for mut hunger in &mut query {
-            hunger.value = update_parameter(&hunger.value, |x| (hunger.decay)(x));
-        }
+        ev.write(WorldTick);
     }
 }
-fn update_thirst(time: Res<Time>, mut timer: ResMut<WorldTimer>, mut query: Query<&mut Thirst>) {
-    if timer.0.tick(time.delta()).just_finished() {
-        for mut thirst in &mut query {
-            thirst.value = update_parameter(&thirst.value, |x| (thirst.decay)(x));
-        }
+
+fn update_hunger(mut query: Query<&mut Hunger>) {
+    for mut hunger in &mut query {
+        hunger.value = update_parameter(&hunger.value, |x| (hunger.decay)(x));
     }
 }
-fn update_sleep(time: Res<Time>, mut timer: ResMut<WorldTimer>, mut query: Query<&mut Sleep>) {
-    if timer.0.tick(time.delta()).just_finished() {
-        for mut sleep in &mut query {
-            sleep.value = update_parameter(&sleep.value, |x| (sleep.decay)(x));
-        }
+
+fn update_thirst(mut query: Query<&mut Thirst>) {
+    for mut thirst in &mut query {
+        thirst.value = update_parameter(&thirst.value, |x| (thirst.decay)(x));
+    }
+}
+
+fn update_sleep(mut query: Query<&mut Sleep>) {
+    for mut sleep in &mut query {
+        sleep.value = update_parameter(&sleep.value, |x| (sleep.decay)(x));
     }
 }
 
@@ -272,7 +294,7 @@ fn add_animal(
         let x = rng.random_range(-400.0..=400.0);
         let y = rng.random_range(-400.0..=400.0);
         let character = CharacterBundle {
-            name: Name(n.to_string()),
+            name: EntityLabel(n.to_string()),
             health: Health(100.0),
             hunger: Hunger { value: 100.0, decay: |x| x - 1.0 },
             thirst: Thirst { value: 100.0, decay: |x| x - 1.0 },
@@ -310,7 +332,7 @@ fn add_food(
         let x = rng.random_range(-600.0..=600.0);
         let y = rng.random_range(-600.0..=600.0);
         let food = FoodBundle {
-            name: Name(i.to_string()),
+            name: EntityLabel(i.to_string()),
             food: Food(30.),
             tracked: FoodTracking,
         };

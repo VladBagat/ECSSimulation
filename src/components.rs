@@ -26,7 +26,7 @@ pub struct Sleep{
 }
 
 #[derive(Component)]
-pub struct Name(pub String);
+pub struct EntityLabel(pub String);
 
 #[derive(Component)]
 pub struct Speed(pub f32);
@@ -51,7 +51,7 @@ pub struct FoodTracking;
 
 #[derive(Bundle)]
 pub struct CharacterBundle {
-    pub name: Name,
+    pub name: EntityLabel,
     pub health: Health,
     pub hunger: Hunger,
     pub thirst: Thirst,
@@ -64,7 +64,7 @@ pub struct CharacterBundle {
 
 #[derive(Bundle)]
 pub struct FoodBundle {
-    pub name: Name,
+    pub name: EntityLabel,
     pub food: Food,
     pub tracked: FoodTracking,
 }

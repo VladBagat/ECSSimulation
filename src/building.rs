@@ -140,6 +140,7 @@ fn state_cleanup_building(
     }
 }
 
+
 // TODO: UI doesn't scale with camera 
 fn state_ui_startup_building(
     camera_q: Query<Entity, With<MainCamera>>,
@@ -223,6 +224,7 @@ fn state_ui_startup_building(
         });
     }
 }
+
 
 fn handle_building_collisions(
     mut collision_events: EventReader<CollisionEvent>,
