@@ -14,6 +14,7 @@ use materials::{CommonMaterials, setup_common_materials};
 use world_grid::WorldGrid;
 use rand::Rng;
 use bevy_rapier2d::prelude::*;
+use bevy_rapier2d::render::RapierDebugRenderPlugin;
 use bevy_spatial::{kdtree::KDTree2, AutomaticUpdate, SpatialAccess, SpatialStructure, TransformMode};
 
 use crate::states::GameControlState;
@@ -21,8 +22,15 @@ use crate::states::GameControlState;
 pub struct Movement;
 pub struct Visual;
 pub struct CameraControls;
+
+pub struct HumanPlugins;
 pub struct GameBuildingPlugins;
 pub struct GameDefaultPlugins;
+
+#[derive(Resource, Default, Debug, Clone, Copy)]
+struct DebugOptions {
+    enabled: bool,
+}
 
 #[derive(Component)]
 struct BuildingUi;
@@ -44,31 +52,40 @@ struct WorldTimer(Timer);
 struct LongBehaviourTimer(Timer);
 
 fn main() {
-    App::new()
+    let dbg_enabled = std::env::args().any(|a| a == "--dbg" || a == "--debug" || a == "-d")
+        || std::env::var("DBG").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false)
+        || std::env::var("BEVY_DEBUG").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+
+    let mut app = App::new();
+    app
+        .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
+        .insert_resource(WorldTimer(Timer::from_seconds(1.0, TimerMode::Repeating)))
+        .insert_resource(LongBehaviourTimer(Timer::from_seconds(5.0, TimerMode::Repeating)))
+        .insert_resource(WorldGrid::new(160, 160, 25))
+        .insert_resource(DebugOptions { enabled: dbg_enabled })
         .add_plugins((DefaultPlugins, UiLunexPlugins))
         .add_plugins(Visual)
         .add_plugins(Movement)
         .add_plugins(CameraControls)
         .add_plugins((GameDefaultPlugins, GameBuildingPlugins))
-        .insert_state(GameControlState::Default)
-        .run();
+        //.add_plugins(HumanPlugins)
+        .insert_state(GameControlState::Default);
+
+    if dbg_enabled {
+        // Enable Rapier's debug render if debug mode is on.
+        app.add_plugins(RapierDebugRenderPlugin::default());
+        app.add_systems(Update, (draw_world_grid, draw_grid_enum));
+        println!("[DBG] Debug mode enabled (RapierDebugRenderPlugin active)");
+    }
+
+    app.run();
 }
 
 impl Plugin for Movement {
     fn build(&self, app: &mut App) {
-        app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
-        //.add_plugins(RapierDebugRenderPlugin::default()) //debug
-        .add_plugins(AutomaticUpdate::<FoodTracking>::new()
-            .with_frequency(Duration::from_secs_f32(1.))
-            .with_transform(TransformMode::GlobalTransform)
-            .with_spatial_ds(SpatialStructure::KDTree2))
-        .insert_resource(WorldTimer(Timer::from_seconds(1.0, TimerMode::Repeating)))
-        .insert_resource(LongBehaviourTimer(Timer::from_seconds(5.0, TimerMode::Repeating)))
-        .insert_resource(WorldGrid::new(160, 160, 25))
-        .add_systems(Startup, ((setup_common_materials, add_animal, add_food, draw_grid_enum)).chain())
-        .add_systems(Update, (update_hunger, update_thirst, update_sleep))
-        .add_systems(Update, (handle_food_collisions, test_tree, draw_world_grid))
-        .add_systems(FixedUpdate, (update_movement).chain());
+        app
+        .add_systems(Startup, ((setup_common_materials)).chain())
+        .add_systems(Update, (update_hunger, update_thirst, update_sleep));
     }
 }
 
@@ -76,14 +93,11 @@ impl Plugin for CameraControls {
     fn build(&self, app: &mut App) {
         app
             .insert_resource(UiBlockHoverCount::default())
-            // Register a global event for cursor world/grid position
             .add_event::<CursorWorldEvent>()
-            // Systems
-            .add_systems(
-                Update,
+            .add_systems(Update,
                 (
-                    track_mouse_world_position, // emit cursor event
-                    cursor_event_to_state,       // keep TempState.cur_cel in sync for legacy users
+                    track_mouse_world_position,
+                    cursor_event_to_state, 
                     camera_controls,
                 ),
             );
@@ -95,6 +109,19 @@ impl Plugin for Visual {
         app.add_systems(Startup,  visual_setup);
     }
 }
+
+impl Plugin for HumanPlugins {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(AutomaticUpdate::<FoodTracking>::new()
+            .with_frequency(Duration::from_secs_f32(1.))
+            .with_transform(TransformMode::GlobalTransform)
+            .with_spatial_ds(SpatialStructure::KDTree2))
+        .add_systems(Startup, (add_animal, add_food))
+        .add_systems(Update, (handle_food_collisions, food_search))
+        .add_systems(FixedUpdate, update_movement);
+    }
+}
+
 impl Plugin for GameDefaultPlugins {
     fn build(&self, app: &mut App) {
         app
@@ -123,7 +150,7 @@ fn visual_setup(mut commands: Commands) {
     ));
 }
 
-fn test_tree(
+fn food_search(
     tree: Res<KDTree2<FoodTracking>>,
     query: Query<(Entity, &Transform), (With<Speed>, With<Destination>)>,
     mut destination_query: Query<&mut Destination>,
@@ -133,7 +160,7 @@ fn test_tree(
     let color = Color::srgba(0.75, 0.75, 0., 0.75); // Move all gizmos to a separate system?
     for (hero_entity, hero_pos) in query {
         let origin = hero_pos.translation.truncate();
-        //gizmos.circle_2d(origin, radius, color);
+        gizmos.circle_2d(origin, radius, color);
         let objects_prox = tree.within_distance(origin, radius);
         if objects_prox.len() != 0 {
             let mut items: Vec<(f32, Vec2, Option<Entity>)> = objects_prox
